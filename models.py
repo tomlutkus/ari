@@ -1,3 +1,6 @@
+import datetime
+
+
 class Host:
     def __init__(
         self,
@@ -17,15 +20,62 @@ class Host:
         self.tags = tags
         self.ssh_key = ssh_key
         self.notes = notes
-        self.last_updated = last_updated
+        if not last_updated:
+            self.last_updated = datetime.datetime.now().isoformat()
+        else:
+            self.last_updated = last_updated
 
     def __str__(self) -> str:
-        return self.name
+        lines = [
+            f"name: {self.name}",
+            f"hostname: {self.hostname}",
+            f"user: {self.user}",
+            f"port: {self.port}",
+            f"tags: {self.tags}",
+            f"ssh_key: {self.ssh_key}",
+            f"notes: {self.notes}",
+            f"last_updated: {self.last_updated}",
+        ]
+        return "\n".join(lines)
 
     def to_dict(self) -> dict:
-        host_dictionary = {}
+        host_dictionary = {
+            "name": self.name,
+            "hostname": self.hostname,
+            "user": self.user,
+            "port": self.port,
+            "tags": self.tags,
+            "ssh_key": self.ssh_key,
+            "notes": self.notes,
+            "last_updated": self.last_updated,
+        }
         return host_dictionary
 
     @classmethod
     def from_dict(cls, data):
-        pass
+        if not isinstance(data, dict):
+            raise TypeError
+        required_keys = [
+            "name",
+            "hostname",
+            "user",
+            "port",
+            "tags",
+            "ssh_key",
+            "notes",
+            "last_updated",
+        ]
+        for key in required_keys:
+            if key not in data:
+                raise KeyError
+
+        return cls(
+            data["name"],
+            data["hostname"],
+            data["user"],
+            data["port"],
+            data["tags"],
+            data["ssh_key"],
+            data["notes"],
+            data["last_updated"],
+        )
