@@ -23,7 +23,7 @@ def main():
         elif user_choice == "1":
             print("Current inventory entries:\n")
             print(my_inventory.list_hosts())
-            input("\nPress ENTER to continue...") 
+            input("\nPress ENTER to continue...")
         elif user_choice == "2":
             pass
         elif user_choice == "3":
