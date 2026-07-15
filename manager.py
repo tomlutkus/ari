@@ -10,12 +10,18 @@ class InventoryManager:
 
     def _load_inventory(self):
         location = pathlib.Path("./inventory.json")
-        with open(location, "r") as inventory_file:
-            hosts_dictionary = json.load(inventory_file)
-            hosts_list = hosts_dictionary["hosts"]
-            for host_dictionary in hosts_list:
-                host = Host.from_dict(host_dictionary)
-                self.hosts.append(host)
+        try:
+            with open(location, "r") as inventory_file:
+                hosts_dictionary = json.load(inventory_file)
+                hosts_list = hosts_dictionary["hosts"]
+                for host_dictionary in hosts_list:
+                    host = Host.from_dict(host_dictionary)
+                    self.hosts.append(host)
+            return True
+        except FileNotFoundError:
+            return False
+        except json.JSONDecodeError:
+            return False
 
     def save_inventory(self):
         pass
@@ -25,7 +31,7 @@ class InventoryManager:
         hosts_text = []
         for host in hosts_copy:
             hosts_text.append(str(host))
-
+        
         return "\n".join(hosts_text)
 
     def add_host(self):

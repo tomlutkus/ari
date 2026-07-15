@@ -3,8 +3,11 @@ Hosts Inventory Manager - Keep your hosts tidy!
 Author: Thomas Lutkus <thomas@lutkus.net>
 """
 
+from manager import InventoryManager
+
 
 def main():
+    my_inventory = InventoryManager()
     while True:
         print("\033c", end="")
         print("Hosts Inventory Manager v0.1")
@@ -18,7 +21,9 @@ def main():
         if user_choice == "6":
             break
         elif user_choice == "1":
-            pass
+            print("Current inventory entries:\n")
+            print(my_inventory.list_hosts())
+            input("\nPress ENTER to continue...") 
         elif user_choice == "2":
             pass
         elif user_choice == "3":
@@ -30,8 +35,6 @@ def main():
         else:
             input("Your choice was not valid! Press <ENTER> to try again.")
             continue
-
-
 
 
 # Hosts Inventory Manager
