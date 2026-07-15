@@ -52,7 +52,7 @@ class Host:
         return host_dictionary
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data: dict) -> Host:
         if not isinstance(data, dict):
             raise TypeError
         required_keys = [
