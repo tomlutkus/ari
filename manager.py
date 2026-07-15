@@ -27,12 +27,8 @@ class InventoryManager:
         pass
 
     def list_hosts(self):
-        hosts_copy = self.hosts.copy()
-        hosts_text = []
-        for host in hosts_copy:
-            hosts_text.append(str(host))
-        
-        return "\n".join(hosts_text)
+        hosts_text = [str(host) for host in self.hosts]
+        return "\n===============================================\n".join(hosts_text)
 
     def add_host(self):
         pass
@@ -47,6 +43,6 @@ class InventoryManager:
         pass
 
 
-inv_manager = InventoryManager()
-text = inv_manager.list_hosts()
-print(text)
+# inv_manager = InventoryManager()
+# text = inv_manager.list_hosts()
+# print(text)
