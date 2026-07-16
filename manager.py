@@ -1,3 +1,5 @@
+import datetime
+
 from models import Host
 import json
 import pathlib
@@ -8,11 +10,11 @@ class InventoryManager:
         self.hosts = []
         self._load_inventory()
 
-    def _load_inventory(self):
+    def _load_inventory(self) -> bool:
         location = pathlib.Path("./inventory.json")
         try:
-            with open(location, "r") as inventory_file:
-                hosts_dictionary = json.load(inventory_file)
+            with open(location, "r") as file:
+                hosts_dictionary = json.load(file)
                 hosts_list = hosts_dictionary["hosts"]
                 for host_dictionary in hosts_list:
                     host = Host.from_dict(host_dictionary)
@@ -24,7 +26,13 @@ class InventoryManager:
             return False
 
     def save_inventory(self):
-        pass
+        location = pathlib.Path("./inventory.json")
+        data = {
+            "hosts": [host.to_dict() for host in self.hosts],
+            "last_updated": datetime.datetime.now().isoformat(),
+        }
+        with open(location, "w") as file:
+            json.dump(data, file, indent=2)
 
     def list_hosts(self):
         hosts_text = [str(host) for host in self.hosts]
