@@ -26,7 +26,8 @@ def main():
             print(my_inventory.list_hosts())
             input("\nPress ENTER to continue...")
         elif user_choice == "2":
-            pass
+            my_inventory.add_host()
+            input("\nPress ENTER to continue...")
         elif user_choice == "3":
             pass
         elif user_choice == "4":
@@ -40,15 +41,6 @@ def main():
         else:
             input("Your choice was not valid! Press <ENTER> to try again.")
             continue
-
-
-# Hosts Inventory Manager
-# 1. List all hosts
-# 2. Add a new host
-# 3. Remove a host
-# 4. Export to SSH config
-# 5. Export to Ansible Inventory
-# 6. Quit
 
 
 if __name__ == "__main__":
