@@ -26,6 +26,21 @@ class InventoryManager:
         except json.JSONDecodeError:
             return False
 
+    def _find_host(self, text: str) -> list:
+        search = text.lower()
+        found_hosts = []
+        seen_hosts = set()
+        for host in self.hosts:
+            for value in vars(host).values():
+                if (
+                    isinstance(value, str)
+                    and search in value.lower()
+                    and host.name not in seen_hosts
+                ):
+                    found_hosts.append(host)
+                    seen_hosts.add(host.name)
+        return found_hosts
+
     def save_inventory(self):
         location = pathlib.Path("./inventory.json")
         data = {
@@ -71,7 +86,21 @@ class InventoryManager:
         return True
 
     def remove_host(self):
-        pass
+        print("\n=== Remove Host ===")
+        search_text = input("Type a search to find the host you'd like to remove: ")
+        host_list = self._find_host(search_text)
+        print("\nThe following hosts match your search:")
+        for i, host in enumerate(host_list, 1):
+            print(f"{i}. {host.name}")
+        selection = int(input("Type the number of the host you'd like to remove: "))
+        name = host_list[selection - 1].name
+
+        new_hosts = []
+        for host in self.hosts:
+            if host.name != name:
+                new_hosts.append(host)
+        self.hosts = new_hosts
+        return True
 
     def export_to_ssh(self):
         pass
