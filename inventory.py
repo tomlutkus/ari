@@ -29,7 +29,8 @@ def main():
             my_inventory.add_host()
             input("\nPress ENTER to continue...")
         elif user_choice == "3":
-            pass
+            my_inventory.remove_host()
+            input("\nPress ENTER to continue...")
         elif user_choice == "4":
             pass
         elif user_choice == "5":
