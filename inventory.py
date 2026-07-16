@@ -16,9 +16,10 @@ def main():
         print("3. Remove a host")
         print("4. Export to SSH config")
         print("5. Export to Ansible Inventory")
-        print("6. Quit")
+        print("6. Save to JSON file")
+        print("7. Quit")
         user_choice = input("\nType your choice and press <ENTER>:\n> ")
-        if user_choice == "6":
+        if user_choice == "7":
             break
         elif user_choice == "1":
             print("Current inventory entries:\n")
@@ -32,6 +33,10 @@ def main():
             pass
         elif user_choice == "5":
             pass
+        elif user_choice == "6":
+            my_inventory.save_inventory()
+            print("Saved inventory to file inventory.json")
+            input("\nPress ENTER to continue...")
         else:
             input("Your choice was not valid! Press <ENTER> to try again.")
             continue
