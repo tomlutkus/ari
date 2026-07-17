@@ -51,11 +51,18 @@ class InventoryManager:
             json.dump(data, file, indent=2)
 
     def list_hosts(self):
-        hosts_text = [str(host) for host in self.hosts]
-        return "\n===============================================\n".join(hosts_text)
+        if not self.hosts:
+            return "No hosts in inventory."
+        header = f"{'NAME':<16}{'HOSTNAME':<18}{'USER':<12}{'PORT':<6}{'TAGS'}"
+        rows = [header, "-" * len(header)]
+        for host in self.hosts:
+            tags = ", ".join(host.tags) if host.tags else "-"
+            rows.append(
+                f"{host.name:<16}{host.hostname:<18}{host.user:<12}{host.port:<6}{tags}"
+            )
+        return "\n".join(rows)
 
     def add_host(self) -> bool:
-
         print("\n=== Add New Host ===")
         print(
             "Enter the required fields. Press ENTER to use defaults where available.\n"
@@ -117,7 +124,7 @@ class InventoryManager:
         print("\n=== Remove Host ===")
         search_text = input("Type a search to find the host you'd like to remove: ")
         host_list = self._find_host(search_text)
-        print("\nThe following hosts match your search:")
+        print("\nThe following hosts match your search:\n")
         for i, host in enumerate(host_list, 1):
             print(f"{i}. {host.name}")
         selection = int(input("Type the number of the host you'd like to remove: "))
@@ -135,8 +142,3 @@ class InventoryManager:
 
     def export_to_ansible(self):
         pass
-
-
-# inv_manager = InventoryManager()
-# text = inv_manager.list_hosts()
-# print(text)
