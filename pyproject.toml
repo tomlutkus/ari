@@ -10,8 +10,16 @@ dependencies = [
 ]
 
 [project.scripts]
-hosts = "hosts_inventory_manager.cli:main"
+hosts = "hosts.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "hosts"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
