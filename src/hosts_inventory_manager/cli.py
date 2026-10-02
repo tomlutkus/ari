@@ -3,7 +3,7 @@ Hosts Inventory Manager - Keep your hosts tidy!
 Author: Thomas Lutkus <thomas@lutkus.net>
 """
 
-from manager import InventoryManager
+from .manager import InventoryManager
 
 
 def main():

@@ -1,6 +1,6 @@
 import datetime
 
-from models import Host
+from .models import Host
 import json
 import pathlib
 import os

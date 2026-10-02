@@ -8,3 +8,10 @@ dependencies = [
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
 ]
+
+[project.scripts]
+hosts = "hosts_inventory_manager.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13"]
+build-backend = "uv_build"
