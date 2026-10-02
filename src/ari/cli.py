@@ -1,4 +1,4 @@
-"""hosts: keep your SSH hosts in one place, export ssh config and Ansible inventory."""
+"""ari: keep your SSH hosts in one place, export ssh config and Ansible inventory."""
 
 import argparse
 import sys
@@ -113,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("-i", "--inventory", metavar="INV", default=argparse.SUPPRESS, help="inventory to act on")
 
     parser = argparse.ArgumentParser(
-        prog="hosts",
+        prog="ari",
         parents=[common],
         description="Keep SSH hosts in one place; export ssh config and Ansible inventory from it.",
     )

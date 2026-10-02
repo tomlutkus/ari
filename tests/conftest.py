@@ -11,13 +11,13 @@ def home(tmp_path, monkeypatch):
     """An isolated config, state and ssh directory per test."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.delenv("HOSTS_INVENTORY", raising=False)
+    monkeypatch.delenv("ARI_INVENTORY", raising=False)
     (tmp_path / "ssh").mkdir()
     return tmp_path
 
 
 def write_config(home: Path, text: str) -> Path:
-    path = home / "config" / "hosts-inventory" / "config.toml"
+    path = home / "config" / "ari" / "config.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.replace("SSH", str(home / "ssh")))
     return path

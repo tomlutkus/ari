@@ -1,8 +1,8 @@
 import getpass
 
 from conftest import FIXTURES
-from hosts import sshconf
-from hosts.models import Defaults, Inventory
+from ari import sshconf
+from ari.models import Defaults, Inventory
 
 
 def hosts_from(text, source="test"):

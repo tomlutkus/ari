@@ -3,10 +3,10 @@ import stat
 
 import pytest
 
-from hosts import storage
-from hosts.config import InventoryConfig
-from hosts.errors import HostsError
-from hosts.models import Host, Inventory
+from ari import storage
+from ari.config import InventoryConfig
+from ari.errors import HostsError
+from ari.models import Host, Inventory
 
 
 def ic(tmp_path):

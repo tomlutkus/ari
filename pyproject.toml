@@ -1,8 +1,9 @@
 [project]
-name = "hosts-inventory-manager"
-version = "0.1.0"
-description = "A hosts inventory manager that exports to SSH config and Ansible inventory formats"
+name = "ari"
+version = "0.2.0"
+description = "One record per SSH host; generates ssh config and Ansible inventory"
 readme = "README.md"
+authors = [{ name = "Thomas Lutkus", email = "thomas@lutkus.net" }]
 requires-python = ">=3.14"
 dependencies = [
     "pyyaml>=6.0.3",
@@ -10,14 +11,11 @@ dependencies = [
 ]
 
 [project.scripts]
-hosts = "hosts.cli:main"
+ari = "ari.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13"]
 build-backend = "uv_build"
-
-[tool.uv.build-backend]
-module-name = "hosts"
 
 [dependency-groups]
 dev = [

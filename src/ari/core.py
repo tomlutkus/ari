@@ -261,7 +261,7 @@ def export(cfg: Config, scope: str | None = None, targets: frozenset[str] = froz
     blocked = [(p, s) for p, s in checked if s.blocks]
     if blocked and not force:
         lines = [
-            f"{tilde(p.path)}: " + ("edited since the last export" if s is Status.CHANGED else "exists and wasn't written by hosts")
+            f"{tilde(p.path)}: " + ("edited since the last export" if s is Status.CHANGED else "exists and wasn't written by ari")
             for p, s in blocked
         ]
         raise HostsError(

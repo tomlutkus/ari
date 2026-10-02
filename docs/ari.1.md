@@ -1,36 +1,36 @@
 ---
-title: HOSTS
+title: ARI
 section: 1
 header: User Commands
-footer: hosts-inventory-manager 0.1.0
+footer: ari 0.2.0
 date: October 2026
 ---
 
 # NAME
 
-hosts - keep SSH hosts in one place and generate ssh config from them
+ari - keep SSH hosts in one place and generate ssh config from them
 
 # SYNOPSIS
 
-**hosts** [**-i** *INV*] *COMMAND* [*ARGS*]
+**ari** [**-i** *INV*] *COMMAND* [*ARGS*]
 
-**hosts ls** [**--search** *TEXT*] [**--group** *GROUP*]
+**ari ls** [**--search** *TEXT*] [**--group** *GROUP*]
 
-**hosts show** *NAME*
+**ari show** *NAME*
 
-**hosts import ssh** *FILE* [**--no-ansible**]
+**ari import ssh** *FILE* [**--no-ansible**]
 
-**hosts export** [**ssh** | **ansible**] [**--force**]
+**ari export** [**ssh** | **ansible**] [**--force**]
 
 # DESCRIPTION
 
-**hosts** keeps one record per SSH host in JSON inventories and writes ssh config files from them. Each inventory, such as *personal* or *work*, is declared in **config.toml** with its own export targets.
+**ari** keeps one record per SSH host in JSON inventories and writes ssh config files from them. Each inventory, such as *personal* or *work*, is declared in **config.toml** with its own export targets.
 
 Names and aliases are unique across all inventories, compared case-insensitively the way ssh compares them. Every generated file lands in one ssh namespace where the first match wins, so a duplicate would silently shadow a host.
 
-Generated files are output, not something to edit. **hosts** records a hash of every file it writes and refuses to overwrite one that changed since.
+Generated files are output, not something to edit. **ari** records a hash of every file it writes and refuses to overwrite one that changed since.
 
-With no arguments, **hosts** prints help.
+With no arguments, **ari** prints help.
 
 # THE NAME
 
@@ -83,21 +83,21 @@ Ansible export is not implemented yet. The target is accepted and skipped with a
 
 | Option | Meaning |
 |-------|-------------|
-| **--force** | Overwrite files that were edited since the last export, or never written by **hosts** |
+| **--force** | Overwrite files that were edited since the last export, or never written by **ari** |
 
 # OPTIONS
 
 | Option | Meaning |
 |-------|-------------|
 | **-i**, **--inventory** *INV* | Inventory to act on; accepted before or after the command |
-| **-h**, **--help** | Show help for **hosts** or for one command |
+| **-h**, **--help** | Show help for **ari** or for one command |
 | **--version** | Show the version |
 
-**import** writes to one inventory: **-i**, then **HOSTS_INVENTORY**, then **default** from config.toml. **ls** and **export** cover every inventory unless **-i** narrows them.
+**import** writes to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. **ls** and **export** cover every inventory unless **-i** narrows them.
 
 # CONFIGURATION
 
-**config.toml** declares the inventories and where each one exports. **hosts** reads it and never writes it.
+**config.toml** declares the inventories and where each one exports. **ari** reads it and never writes it.
 
 ```toml
 default = "personal"
@@ -106,13 +106,13 @@ default = "personal"
 ssh = "~/.ssh/config.d/10-personal.conf"
 
 [inventories.work]
-file = "~/work/infra/hosts-inventory/work.json"
+file = "~/work/infra/ari/work.json"
 ssh = "~/.ssh/config.d/20-work.conf"
 ```
 
 | Key | Meaning |
 |-------|-------------|
-| **default** | Inventory used by **import** when **-i** and **HOSTS_INVENTORY** are unset |
+| **default** | Inventory used by **import** when **-i** and **ARI_INVENTORY** are unset |
 | `inventories.NAME.file` | Inventory data; defaults to `NAME.json` beside config.toml |
 | `inventories.NAME.ssh` | Generated ssh config; absolute or starting with **~** |
 | `inventories.NAME.ansible` | Reserved for Ansible export |
@@ -156,7 +156,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 | **groups**, **reasons** | Ansible group membership; used once Ansible export exists |
 | **ansible** | **false** keeps the host out of Ansible export |
 
-A file that fails to parse stops **hosts** with the path and the error. It is never treated as empty.
+A file that fails to parse stops **ari** with the path and the error. It is never treated as empty.
 
 # GENERATED SSH CONFIG
 
@@ -172,13 +172,13 @@ Every write goes to `FILE.tmp` beside the target and is then renamed over it. `I
 | `NAME.json` | Inventory data, one file per inventory |
 | `exports.json` | Hashes of exported files, for the guard |
 
-`config.toml` and the inventories live in `~/.config/hosts-inventory/`, and `exports.json` in `~/.local/state/hosts-inventory/`. **XDG_CONFIG_HOME** and **XDG_STATE_HOME** move them. Losing the state file only means the guard refuses existing targets until the next import or **--force**.
+`config.toml` and the inventories live in `~/.config/ari/`, and `exports.json` in `~/.local/state/ari/`. **XDG_CONFIG_HOME** and **XDG_STATE_HOME** move them. Losing the state file only means the guard refuses existing targets until the next import or **--force**.
 
 # ENVIRONMENT
 
 | Variable | Effect |
 |-------|-------------|
-| **HOSTS_INVENTORY** | Inventory for **import** when **-i** is not given |
+| **ARI_INVENTORY** | Inventory for **import** when **-i** is not given |
 | **XDG_CONFIG_HOME** | Where config.toml and inventories live |
 | **XDG_STATE_HOME** | Where the guard state lives |
 
@@ -191,20 +191,20 @@ Every write goes to `FILE.tmp` beside the target and is then renamed over it. `I
 Take over an existing ssh config file, then regenerate it:
 
 ```
-hosts import ssh ~/.ssh/config.d/10-personal.conf -i personal
-hosts export
+ari import ssh ~/.ssh/config.d/10-personal.conf -i personal
+ari export
 ```
 
 Find every host on a subnet:
 
 ```
-hosts ls --search 192.0.2.
+ari ls --search 192.0.2.
 ```
 
 Accept a file after reviewing a hand edit:
 
 ```
-hosts export --force
+ari export --force
 ```
 
 # SEE ALSO

@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from conftest import FIXTURES, copy_fixture
-from hosts.cli import main
+from ari.cli import main
 
 
 def run(*argv):
@@ -13,12 +13,12 @@ def run(*argv):
 
 
 def personal_json(home):
-    return json.loads((home / "config" / "hosts-inventory" / "personal.json").read_text())
+    return json.loads((home / "config" / "ari" / "personal.json").read_text())
 
 
 def test_no_arguments_prints_help(capsys):
     assert run() == 0
-    assert "usage: hosts" in capsys.readouterr().out
+    assert "usage: ari" in capsys.readouterr().out
 
 
 def test_missing_config_explains_itself(home, capsys):
@@ -61,7 +61,7 @@ def test_guard_refuses_unknown_and_edited_files(personal, capsys):
     capsys.readouterr()
 
     assert run("export") == 1
-    assert "wasn't written by hosts" in capsys.readouterr().err
+    assert "wasn't written by ari" in capsys.readouterr().err
     assert target.read_text() == "# hand made\n"
 
     assert run("export", "--force") == 0

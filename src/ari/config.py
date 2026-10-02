@@ -9,7 +9,7 @@ from typing import Any
 
 from .errors import HostsError
 
-APP = "hosts-inventory"
+APP = "ari"
 
 SAMPLE = """\
 default = "personal"
@@ -61,10 +61,10 @@ class Config:
             raise HostsError(f"no inventory {name!r} in {tilde(self.path)} (known: {known})") from None
 
     def select(self, requested: str | None) -> InventoryConfig:
-        """The one inventory a command acts on: -i, then $HOSTS_INVENTORY, then the config default."""
-        name = requested or os.environ.get("HOSTS_INVENTORY") or self.default
+        """The one inventory a command acts on: -i, then $ARI_INVENTORY, then the config default."""
+        name = requested or os.environ.get("ARI_INVENTORY") or self.default
         if not name:
-            raise HostsError("no inventory selected: pass -i NAME, set HOSTS_INVENTORY, or set default in config.toml")
+            raise HostsError("no inventory selected: pass -i NAME, set ARI_INVENTORY, or set default in config.toml")
         return self.get(name)
 
     def scope(self, requested: str | None) -> list[InventoryConfig]:
