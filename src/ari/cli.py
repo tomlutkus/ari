@@ -83,7 +83,8 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     grid.add_row("port", inherited(host.port, inventory.port(host)))
     grid.add_row("ssh key", inherited(host.ssh_key, inventory.ssh_key(host)))
     grid.add_row("notes", Text(host.notes or "-"))
-    grid.add_row("groups", Text(", ".join(host.groups) or "-"))
+    groups = [f"{g} ({host.reasons[g]})" if g in host.reasons else g for g in host.groups]
+    grid.add_row("groups", Text(", ".join(groups) or "-"))
     grid.add_row("exclude", Text(", ".join(host.exclude) or "-"))
     installed = registry().modules
     for name in sorted(set(installed) | set(host.modules)):
@@ -95,6 +96,42 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
             grid.add_row(name, Text("\n".join(lines)))
     grid.add_row("updated", Text(host.last_updated or "-"))
     out.print(grid)
+    return 0
+
+
+def _changes(args: argparse.Namespace) -> core.Changes:
+    return core.Changes(
+        hostname=getattr(args, "new_hostname", None),
+        rename=getattr(args, "new_name", None),
+        user=args.user,
+        port=args.port,
+        ssh_key=args.key,
+        notes=args.notes,
+        aliases=args.alias,
+        options=args.opt,
+        groups=args.group,
+        ungroup=getattr(args, "ungroup", []),
+        exclude=args.exclude,
+        include=getattr(args, "include", []),
+    )
+
+
+def cmd_add(cfg: Config, args: argparse.Namespace) -> int:
+    inventory = cfg.select(_inventory_arg(args)).name
+    inventory, host = core.add_host(cfg, inventory, args.name, args.hostname, _changes(args))
+    out.print(f"added {host.name} to {inventory.name}", soft_wrap=True)
+    return 0
+
+
+def cmd_edit(cfg: Config, args: argparse.Namespace) -> int:
+    inventory, host, changed = core.edit_host(cfg, args.name, _changes(args), _inventory_arg(args))
+    out.print(f"{'updated' if changed else 'no change to'} {host.name} ({inventory.name})", soft_wrap=True)
+    return 0
+
+
+def cmd_rm(cfg: Config, args: argparse.Namespace) -> int:
+    inventory, host = core.remove_host(cfg, args.name, _inventory_arg(args))
+    out.print(f"removed {host.name} from {inventory.name}", soft_wrap=True)
     return 0
 
 
@@ -152,6 +189,51 @@ def cmd_export(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _key_value(text: str) -> tuple[str, str]:
+    key, sep, value = text.partition("=")
+    if not sep or not key:
+        raise argparse.ArgumentTypeError(f"expected KEY=VALUE, got {text!r}")
+    return key, value
+
+
+def _group_reason(text: str) -> tuple[str, str | None]:
+    group, sep, reason = text.partition(":")
+    if not group or (sep and not reason):
+        raise argparse.ArgumentTypeError(f"expected GROUP or GROUP:REASON, got {text!r}")
+    return group, reason or None
+
+
+def _host_options(p: argparse.ArgumentParser, edit: bool) -> None:
+    clear = "; '' goes back to the default" if edit else ""
+    p.add_argument("--user", metavar="USER", help="login name" + clear)
+    p.add_argument("--port", metavar="PORT", help="ssh port" + clear)
+    p.add_argument("--key", metavar="PATH", help="private key (IdentityFile)" + clear)
+    p.add_argument("--notes", metavar="TEXT", help="free text, a comment above the Host block")
+    p.add_argument("--alias", metavar="ALIAS", action="append", default=[], help="another name; repeatable")
+    p.add_argument(
+        "--opt",
+        metavar="KEY=VALUE",
+        action="append",
+        default=[],
+        type=_key_value,
+        help="ssh option; repeatable" + ("; KEY= removes it" if edit else ""),
+    )
+    p.add_argument(
+        "--group",
+        metavar="GROUP[:REASON]",
+        action="append",
+        default=[],
+        type=_group_reason,
+        help="join a declared group, with an optional reason; repeatable",
+    )
+    p.add_argument("--exclude", metavar="MODULE", action="append", default=[], help="keep out of MODULE's output; repeatable")
+    if edit:
+        p.add_argument("--hostname", metavar="HOSTNAME", dest="new_hostname", help="new address")
+        p.add_argument("--rename", metavar="NAME", dest="new_name", help="new name")
+        p.add_argument("--ungroup", metavar="GROUP", action="append", default=[], help="leave a group; repeatable")
+        p.add_argument("--include", metavar="MODULE", action="append", default=[], help="undo an --exclude; repeatable")
+
+
 def build_parser() -> argparse.ArgumentParser:
     # -i works before or after the subcommand; SUPPRESS keeps a later parser from erasing an earlier value.
     common = argparse.ArgumentParser(add_help=False)
@@ -173,6 +255,21 @@ def build_parser() -> argparse.ArgumentParser:
     show = sub.add_parser("show", parents=[common], help="show one host with its effective values")
     show.add_argument("name", help="host name or alias")
     show.set_defaults(func=cmd_show)
+
+    add = sub.add_parser("add", parents=[common], help="add a host to one inventory")
+    add.add_argument("name", metavar="NAME", help="ssh alias")
+    add.add_argument("hostname", metavar="HOSTNAME", help="address ssh connects to")
+    _host_options(add, edit=False)
+    add.set_defaults(func=cmd_add)
+
+    edit = sub.add_parser("edit", parents=[common], help="change a host")
+    edit.add_argument("name", metavar="NAME", help="host name or alias")
+    _host_options(edit, edit=True)
+    edit.set_defaults(func=cmd_edit)
+
+    rm = sub.add_parser("rm", parents=[common], help="remove a host")
+    rm.add_argument("name", metavar="NAME", help="host name or alias")
+    rm.set_defaults(func=cmd_rm)
 
     mods = sub.add_parser("modules", parents=[common], help="list installed modules and where they're on")
     mods.set_defaults(func=cmd_modules)

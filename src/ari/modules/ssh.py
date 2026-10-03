@@ -46,12 +46,22 @@ def _quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+# Keywords the host record or the block structure already covers. As options they'd be written a
+# second time, and ssh would quietly take the first.
+_OWN_FIELD = {"host": None, "match": None, "hostname": "hostname", "user": "user", "port": "port", "identityfile": "ssh_key"}
+
+
 def _options_map(data: Any, where: str) -> dict[str, str]:
     if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
         raise HostsError(f"{where}: options must map ssh keywords to strings")
-    for keyword in data:
+    for keyword, value in data.items():
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", keyword):
             raise HostsError(f"{where}: {keyword!r} isn't an ssh_config keyword")
+        if keyword.lower() in _OWN_FIELD:
+            own = _OWN_FIELD[keyword.lower()]
+            raise HostsError(f"{where}: {keyword} can't be an option" + (f"; it's the {own} field" if own else ""))
+        if "\n" in value or "\r" in value:
+            raise HostsError(f"{where}: option {keyword} must be one line")
     return dict(data)
 
 

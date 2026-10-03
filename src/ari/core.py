@@ -1,5 +1,6 @@
 """Operations behind every command. No printing here: the CLI and the TUI both call these."""
 
+import copy
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,12 +58,16 @@ def list_hosts(
     return rows
 
 
-def find_host(cfg: Config, token: str) -> tuple[Inventory, Host]:
-    for inventory in load_all(cfg).values():
-        host = inventory.find(token)
+def _locate(cfg: Config, inventories: dict[str, Inventory], token: str, scope: str | None) -> tuple[Inventory, Host]:
+    for ic in cfg.scope(scope):
+        host = inventories[ic.name].find(token)
         if host:
-            return inventory, host
-    raise HostsError(f"no host named {token!r} in any inventory")
+            return inventories[ic.name], host
+    raise HostsError(f"no host named {token!r} in " + (scope if scope else "any inventory"))
+
+
+def find_host(cfg: Config, token: str, scope: str | None = None) -> tuple[Inventory, Host]:
+    return _locate(cfg, load_all(cfg), token, scope)
 
 
 @dataclass
@@ -96,6 +101,54 @@ def name_problems(inventories: list[Inventory]) -> list[str]:
                 if key in owner and owner[key] != where:
                     problems.append(f"{token!r} is used by both {owner[key]} and {where}")
                 owner.setdefault(key, where)
+    return problems
+
+
+def _membership_problems(inventory: Inventory, host: Host) -> list[str]:
+    """Every group a host is in is declared, so a typo fails instead of making a new group."""
+    where = f"{inventory.name} ({host.name})"
+    problems = []
+    for group in host.groups:
+        if group not in inventory.groups:
+            problems.append(
+                f'{where}: group {group!r} isn\'t declared; add "{group}": {{}} under groups in {tilde(inventory.path)}'
+            )
+    for group, reason in host.reasons.items():
+        if group not in host.groups:
+            problems.append(f"{where}: has a reason for {group!r} without being in it")
+        elif group in inventory.groups and reason not in inventory.groups[group].reasons:
+            known = ", ".join(inventory.groups[group].reasons) or "none"
+            problems.append(f"{where}: group {group!r} has no reason {reason!r} (declared: {known})")
+    return problems
+
+
+def group_problems(inventory: Inventory) -> list[str]:
+    problems = [p for host in inventory.hosts for p in _membership_problems(inventory, host)]
+    groups = inventory.groups
+    for name, group in groups.items():
+        for child in group.children:
+            if child not in groups:
+                problems.append(f"{inventory.name}: group {name!r} has child {child!r}, which isn't declared")
+
+    finished: set[str] = set()
+    reported: set[frozenset[str]] = set()
+
+    def walk(name: str, trail: list[str]) -> None:
+        for child in groups[name].children:
+            if child not in groups or child in finished:
+                continue
+            if child in trail:
+                cycle = trail[trail.index(child):] + [child]
+                if frozenset(cycle) not in reported:
+                    reported.add(frozenset(cycle))
+                    problems.append(f"{inventory.name}: groups {' > '.join(cycle)} form a cycle")
+            else:
+                walk(child, trail + [child])
+        finished.add(name)
+
+    for name in groups:
+        if name not in finished:
+            walk(name, [name])
     return problems
 
 
@@ -245,6 +298,176 @@ def import_hosts(
     return report
 
 
+# Add, edit, rm
+
+
+@dataclass
+class Changes:
+    """What add and edit change. None leaves a field alone. For user, port, key and notes an empty
+    string clears the field, so the inventory default applies again; an option with an empty value
+    is removed. Values arrive as strings, the way the CLI and the TUI's inputs hand them over."""
+
+    hostname: str | None = None
+    rename: str | None = None
+    user: str | None = None
+    port: str | None = None
+    ssh_key: str | None = None
+    notes: str | None = None
+    aliases: list[str] = field(default_factory=list)
+    options: list[tuple[str, str]] = field(default_factory=list)
+    groups: list[tuple[str, str | None]] = field(default_factory=list)
+    ungroup: list[str] = field(default_factory=list)
+    exclude: list[str] = field(default_factory=list)
+    include: list[str] = field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        return self == Changes()
+
+
+def _apply(host: Host, c: Changes) -> list[str]:
+    """Apply changes in place. Returns what couldn't be applied; the record checks come after."""
+    problems = []
+    if c.rename is not None:
+        host.name = c.rename
+    if c.hostname is not None:
+        host.hostname = c.hostname
+    if c.user is not None:
+        host.user = c.user or None
+    if c.ssh_key is not None:
+        host.ssh_key = c.ssh_key or None
+    if c.notes is not None:
+        host.notes = c.notes
+    if c.port is not None:
+        try:
+            host.port = int(c.port) if c.port else None
+        except ValueError:
+            problems.append(f"port must be an integer 1-65535, got {c.port!r}")
+    host.aliases.extend(c.aliases)
+
+    if c.options:
+        own = host.modules.setdefault("ssh", {}).setdefault("options", {})
+        for key, value in c.options:
+            current = next((k for k in own if k.casefold() == key.casefold()), None)
+            if value:
+                own[current or key] = value  # a different spelling of a keyword it has keeps its place
+            elif current:
+                del own[current]
+            else:
+                problems.append(f"no ssh option {key} to clear")
+
+    for group, reason in c.groups:
+        if group not in host.groups:
+            host.groups.append(group)
+        if reason:
+            host.reasons[group] = reason
+        else:
+            host.reasons.pop(group, None)
+    for group in c.ungroup:
+        if group in host.groups:
+            host.groups.remove(group)
+            host.reasons.pop(group, None)
+        else:
+            problems.append(f"isn't in group {group!r}")
+
+    exclude = set(host.exclude) | set(c.exclude)
+    for module in c.include:
+        if module in exclude:
+            exclude.discard(module)
+        else:
+            problems.append(f"doesn't exclude {module!r}")
+    host.exclude = sorted(exclude)
+    return problems
+
+
+def _host_problems(inventories: dict[str, Inventory], inventory: Inventory, host: Host, original: Host | None) -> list[str]:
+    """Everything a host must meet before it's saved: the load rules, its module data, unique names
+    across all inventories, declared groups and valid reasons."""
+    where = f"{inventory.name} ({host.name})"
+    problems = []
+    try:
+        Host.from_dict(host.to_dict(), inventory.name)
+    except HostsError as e:
+        problems.append(str(e))
+    installed = registry().modules
+    for name, data in host.modules.items():
+        if name in installed:
+            try:
+                installed[name].host_data(copy.deepcopy(data), f"{where}: modules.{name}")
+            except HostsError as e:
+                problems.append(str(e))
+    for label, value in (("user", host.user), ("key", host.ssh_key)):
+        if value and ("\n" in value or "\r" in value):
+            problems.append(f"{where}: {label} must be one line")
+
+    seen: set[str] = set()
+    for token in host.tokens():
+        if token.casefold() in seen:
+            problems.append(f"{where}: {token!r} appears twice among its names")
+        seen.add(token.casefold())
+    owner = {
+        token.casefold(): f"{inv.name}/{other.name}"
+        for inv in inventories.values()
+        for other in inv.hosts
+        if other is not original
+        for token in other.tokens()
+    }
+    for token in host.tokens():
+        if token.casefold() in owner:
+            problems.append(f"{where}: {token!r} is already used by {owner[token.casefold()]}")
+    return problems + _membership_problems(inventory, host)
+
+
+def _write(inventories: dict[str, Inventory], inventory: Inventory, original: Host | None, host: Host, c: Changes) -> bool:
+    """Apply, check, save. A host that fails any check is refused and nothing is saved."""
+    problems = [f"{inventory.name} ({host.name}): {p}" for p in _apply(host, c)]
+    _strip_defaults(inventory, host)
+    problems += _host_problems(inventories, inventory, host, original)
+    if problems:
+        raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+    if original is not None and host.to_dict() == original.to_dict():
+        return False
+    host.last_updated = now()
+    if original is None:
+        inventory.hosts.append(host)
+    else:
+        inventory.hosts = [host if h is original else h for h in inventory.hosts]
+    storage.save(inventory)
+    return True
+
+
+def add_host(cfg: Config, inventory_name: str, name: str, hostname: str, changes: Changes) -> tuple[Inventory, Host]:
+    for flag, used in (("--rename", changes.rename), ("--hostname", changes.hostname)):
+        if used is not None:
+            raise HostsError(f"{flag} is for edit; add takes the name and hostname as arguments")
+    if changes.ungroup or changes.include:
+        raise HostsError("--ungroup and --include are for edit")
+    inventories = load_all(cfg)
+    inventory = inventories[cfg.get(inventory_name).name]
+    host = Host(name=name, hostname=hostname)
+    _write(inventories, inventory, None, host, changes)
+    return inventory, host
+
+
+def edit_host(cfg: Config, token: str, changes: Changes, scope: str | None = None) -> tuple[Inventory, Host, bool]:
+    """The host after editing, and whether anything changed."""
+    if changes.is_empty():
+        raise HostsError("nothing to change; pass at least one option")
+    inventories = load_all(cfg)
+    inventory, original = _locate(cfg, inventories, token, scope)
+    host = copy.deepcopy(original)
+    changed = _write(inventories, inventory, original, host, changes)
+    return inventory, host, changed
+
+
+def remove_host(cfg: Config, token: str, scope: str | None = None) -> tuple[Inventory, Host]:
+    """Removing a host removes its group memberships with it: they live on the record."""
+    inventories = load_all(cfg)
+    inventory, host = _locate(cfg, inventories, token, scope)
+    inventory.hosts = [h for h in inventory.hosts if h is not host]
+    storage.save(inventory)
+    return inventory, host
+
+
 # Export
 
 
@@ -280,6 +503,7 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
     planned: list[Planned] = []
     for ic in cfg.scope(scope):
         inventory = inventories[ic.name]
+        problems += group_problems(inventory)
         for mc in ic.enabled():
             module = mc.module
             if not module.exports or (only and module.name not in only):

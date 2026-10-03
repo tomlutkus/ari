@@ -72,7 +72,7 @@ $ ari modules
 - [x] ssh config export, one file per inventory
 - [x] Hash guard and atomic writes
 - [x] `ls` and `show`
-- [ ] `add`, `edit` and `rm`
+- [x] `add`, `edit` and `rm`
 - [x] Formats as modules you switch on per inventory
 - [ ] Ansible inventory export
 - [ ] TUI, with a key that drops you straight into ssh
