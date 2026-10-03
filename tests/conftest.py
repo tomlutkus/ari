@@ -26,16 +26,17 @@ def write_config(home: Path, text: str) -> Path:
 PERSONAL_ONLY = """
 default = "personal"
 
-[inventories.personal]
-ssh = "SSH/10-personal.conf"
+[inventories.personal.ssh]
+path = "SSH/10-personal.conf"
 """
 
 PERSONAL_AND_WORK = PERSONAL_ONLY + """
-[inventories.work]
-ssh = "SSH/20-work.conf"
+[inventories.work.ssh]
+path = "SSH/20-work.conf"
 
 [inventories.work.ansible]
 dir = "SSH/ansible"
+enabled = false
 """
 
 

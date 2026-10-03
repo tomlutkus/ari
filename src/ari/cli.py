@@ -1,8 +1,8 @@
 """ari: keep your SSH hosts in one place, export ssh config and Ansible inventory."""
 
 import argparse
+import getpass
 import sys
-from pathlib import Path
 
 from rich import box
 from rich.console import Console
@@ -10,9 +10,11 @@ from rich.table import Table
 from rich.text import Text
 
 from . import __version__, core
-from .config import Config, load_config, tilde
+from .config import Config, load_config
 from .errors import HostsError
 from .guard import Status
+from .modules import registry
+from .paths import tilde
 
 out = Console(highlight=False)
 err = Console(stderr=True, highlight=False)
@@ -23,7 +25,17 @@ def _inventory_arg(args: argparse.Namespace) -> str | None:
 
 
 def _note(label: str, style: str, message: str) -> None:
-    err.print(Text.assemble((f"{label}: ", style), message))
+    err.print(Text.assemble((f"{label}: ", style), message), soft_wrap=True)
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'s' if n != 1 else ''}"
+
+
+def _user(inventory, host) -> Text:
+    """The User ssh will use. With none set anywhere, that's whoever connects."""
+    user = inventory.user(host)
+    return Text(user) if user else Text(getpass.getuser(), style="dim")
 
 
 def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
@@ -38,13 +50,13 @@ def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
         table.add_row(
             Text(host.name),
             Text(host.hostname),
-            Text(inventory.user(host)),
+            _user(inventory, host),
             Text(str(inventory.port(host))),
             Text(", ".join(host.groups) or "-"),
             Text(inventory.name, style="dim"),
         )
     out.print(table)
-    out.print(Text(f"{len(rows)} host{'s' if len(rows) != 1 else ''}", style="dim"))
+    out.print(Text(_plural(len(rows), "host"), style="dim"))
     return 0
 
 
@@ -59,26 +71,60 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
             return Text("-")
         return Text(str(effective)) if own is not None else Text.assemble(str(effective), ("  (default)", "dim"))
 
-    options = inventory.ssh_options(host)
+    user = inventory.user(host)
     grid.add_row("inventory", Text(inventory.name))
     grid.add_row("name", Text(host.name))
     grid.add_row("aliases", Text(" ".join(host.aliases) or "-"))
     grid.add_row("hostname", Text(host.hostname))
-    grid.add_row("user", inherited(host.user, inventory.user(host)))
+    grid.add_row(
+        "user",
+        inherited(host.user, user) if user else Text.assemble(getpass.getuser(), ("  (whoever connects)", "dim")),
+    )
     grid.add_row("port", inherited(host.port, inventory.port(host)))
     grid.add_row("ssh key", inherited(host.ssh_key, inventory.ssh_key(host)))
-    grid.add_row("ssh options", Text("\n".join(f"{k} {v}" for k, v in options.items()) or "-"))
     grid.add_row("notes", Text(host.notes or "-"))
     grid.add_row("groups", Text(", ".join(host.groups) or "-"))
-    grid.add_row("ansible", Text("yes" if host.ansible else "no"))
+    grid.add_row("exclude", Text(", ".join(host.exclude) or "-"))
+    installed = registry().modules
+    for name in sorted(set(installed) | set(host.modules)):
+        if name in installed:
+            lines = installed[name].describe(inventory, host)
+        else:
+            lines = [f"{k} {v}" for k, v in host.modules[name].items()] + ["(module not installed)"]
+        if lines:
+            grid.add_row(name, Text("\n".join(lines)))
     grid.add_row("updated", Text(host.last_updated or "-"))
     out.print(grid)
     return 0
 
 
-def cmd_import_ssh(cfg: Config, args: argparse.Namespace) -> int:
+def cmd_modules(cfg: Config, args: argparse.Namespace) -> int:
+    rows, failures = core.module_status(cfg)
+    table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
+    for column in ("MODULE", "IMPORT", "EXPORT", "INVENTORIES", "ABOUT"):
+        table.add_column(column)
+    for row in rows:
+        where = Text()
+        for i, (inventory, enabled) in enumerate(row.inventories.items()):
+            if i:
+                where.append(", ")
+            where.append(inventory if enabled else f"{inventory} (off)", style=None if enabled else "dim")
+        table.add_row(
+            Text(row.module.name),
+            Text("yes" if row.module.imports else "-"),
+            Text("yes" if row.module.exports else "-"),
+            where if row.inventories else Text("-", style="dim"),
+            Text(row.module.summary, style="dim"),
+        )
+    out.print(table)
+    for name, reason in failures.items():
+        _note("failed", "red", f"{name}: {reason}")
+    return 0
+
+
+def cmd_import(cfg: Config, args: argparse.Namespace) -> int:
     inventory = cfg.select(_inventory_arg(args)).name
-    report = core.import_ssh(cfg, inventory, args.file, ansible=not args.no_ansible)
+    report = core.import_hosts(cfg, inventory, args.module, args.source, exclude=args.exclude)
     for warning in report.warnings:
         _note("warning", "yellow", warning)
     for conflict in report.conflicts:
@@ -96,12 +142,11 @@ def cmd_import_ssh(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_export(cfg: Config, args: argparse.Namespace) -> int:
-    targets = frozenset({args.target}) if args.target else frozenset({"ssh", "ansible"})
-    report = core.export(cfg, _inventory_arg(args), targets, force=args.force)
+    report = core.export(cfg, _inventory_arg(args), only=args.modules or None, force=args.force)
     for w in report.written:
         p = w.planned
         verb = "unchanged" if w.status is Status.SAME else "wrote"
-        out.print(f"{verb} {tilde(p.path)} ({p.inventory}, {p.hosts} host{'s' if p.hosts != 1 else ''})")
+        out.print(f"{verb} {tilde(p.path)} ({p.inventory}, {p.module}, {_plural(p.hosts, 'host')})", soft_wrap=True)
     for note in report.notes:
         _note("note", "dim", note)
     return 0
@@ -129,15 +174,19 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("name", help="host name or alias")
     show.set_defaults(func=cmd_show)
 
-    imp = sub.add_parser("import", parents=[common], help="import hosts from existing files")
-    sources = imp.add_subparsers(dest="source", metavar="SOURCE", required=True)
-    imp_ssh = sources.add_parser("ssh", parents=[common], help="import Host blocks from an ssh config file")
-    imp_ssh.add_argument("file", type=Path)
-    imp_ssh.add_argument("--no-ansible", action="store_true", help="mark imported hosts as ssh only")
-    imp_ssh.set_defaults(func=cmd_import_ssh)
+    mods = sub.add_parser("modules", parents=[common], help="list installed modules and where they're on")
+    mods.set_defaults(func=cmd_modules)
+
+    imp = sub.add_parser("import", parents=[common], help="import hosts through a module")
+    imp.add_argument("module", metavar="MODULE", help="module to read with, e.g. ssh")
+    imp.add_argument("source", metavar="SOURCE", nargs="?", help="what to read, e.g. an ssh config file")
+    imp.add_argument(
+        "--exclude", metavar="MODULE", action="append", default=[], help="keep imported hosts out of MODULE's output"
+    )
+    imp.set_defaults(func=cmd_import)
 
     exp = sub.add_parser("export", parents=[common], help="write the generated files")
-    exp.add_argument("target", nargs="?", choices=["ssh", "ansible"], help="only this kind of output")
+    exp.add_argument("modules", metavar="MODULE", nargs="*", help="only these modules (default: all enabled)")
     exp.add_argument("--force", action="store_true", help="overwrite files edited since the last export")
     exp.set_defaults(func=cmd_export)
 

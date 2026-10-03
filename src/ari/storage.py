@@ -4,9 +4,11 @@ import json
 import os
 from pathlib import Path
 
-from .config import InventoryConfig, tilde
+from .config import InventoryConfig
 from .errors import HostsError
 from .models import Inventory, now
+from .modules import check_data
+from .paths import tilde
 
 
 def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
@@ -36,7 +38,9 @@ def load(ic: InventoryConfig) -> Inventory:
         raise HostsError(f"{tilde(ic.file)}: not valid JSON ({e})") from None
     except OSError as e:
         raise HostsError(f"{tilde(ic.file)}: {e.strerror}") from None
-    return Inventory.from_dict(data, name=ic.name, path=ic.file)
+    inventory = Inventory.from_dict(data, name=ic.name, path=ic.file)
+    check_data(inventory)
+    return inventory
 
 
 def save(inventory: Inventory) -> None:

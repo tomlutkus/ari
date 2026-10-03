@@ -1,6 +1,6 @@
 """Inventory data model and its JSON form."""
 
-import getpass
+import copy
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -9,10 +9,13 @@ from typing import Any
 
 from .errors import HostsError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # One ssh Host token that names a single host: no whitespace, no pattern characters.
 _TOKEN = re.compile(r"[^\s*?!#,\"'=]+")
+
+# Module names, as registered in the ari.modules entry point group.
+MODULE_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
 
 def now() -> str:
@@ -29,14 +32,6 @@ def check_port(value: Any, where: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
         raise HostsError(f"{where}: port must be an integer 1-65535, got {value!r}")
     return value
-
-
-def _fold_get(options: dict[str, str], key: str) -> str | None:
-    """ssh keywords are case-insensitive; look one up that way."""
-    for k, v in options.items():
-        if k.casefold() == key.casefold():
-            return v
-    return None
 
 
 class _Fields:
@@ -93,6 +88,27 @@ class _Fields:
             raise HostsError(f"{self.where}: {key!r} must map strings to strings")
         return dict(value)
 
+    def module_names(self, key: str) -> list[str]:
+        names = self.strings(key)
+        for name in names:
+            if not MODULE_NAME.fullmatch(name):
+                raise HostsError(f"{self.where}: {key!r} holds {name!r}, which isn't a module name")
+        return names
+
+    def namespaces(self, key: str) -> dict[str, dict[str, Any]]:
+        """Per-module data. Shape only: each module checks its own part once modules are loaded."""
+        value = self.raw(key)
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise HostsError(f"{self.where}: {key!r} must be an object keyed by module name")
+        for name, data in value.items():
+            if not MODULE_NAME.fullmatch(name):
+                raise HostsError(f"{self.where}: {key!r} has {name!r}, which isn't a module name")
+            if not isinstance(data, dict):
+                raise HostsError(f"{self.where}: {key}.{name} must be an object")
+        return copy.deepcopy(value)
+
     def done(self) -> None:
         unknown = set(self.data) - self.used
         if unknown:
@@ -107,11 +123,11 @@ class Host:
     user: str | None = None
     port: int | None = None
     ssh_key: str | None = None
-    ssh_options: dict[str, str] = field(default_factory=dict)
     notes: str = ""
     groups: list[str] = field(default_factory=list)
     reasons: dict[str, str] = field(default_factory=dict)
-    ansible: bool = True
+    exclude: list[str] = field(default_factory=list)
+    modules: dict[str, dict[str, Any]] = field(default_factory=dict)
     last_updated: str = ""
 
     def tokens(self) -> list[str]:
@@ -128,16 +144,17 @@ class Host:
             out["port"] = self.port
         if self.ssh_key is not None:
             out["ssh_key"] = self.ssh_key
-        if self.ssh_options:
-            out["ssh_options"] = self.ssh_options
         if self.notes:
             out["notes"] = self.notes
         if self.groups:
             out["groups"] = self.groups
         if self.reasons:
             out["reasons"] = self.reasons
-        if not self.ansible:
-            out["ansible"] = False
+        if self.exclude:
+            out["exclude"] = self.exclude
+        modules = {name: data for name, data in self.modules.items() if data}
+        if modules:
+            out["modules"] = modules
         out["last_updated"] = self.last_updated
         return out
 
@@ -159,11 +176,11 @@ class Host:
             user=f.text("user"),
             port=port,
             ssh_key=f.text("ssh_key"),
-            ssh_options=f.mapping("ssh_options"),
             notes=f.text("notes") or "",
             groups=f.strings("groups"),
             reasons=f.mapping("reasons"),
-            ansible=f.boolean("ansible", default=True),
+            exclude=f.module_names("exclude"),
+            modules=f.namespaces("modules"),
             last_updated=f.text("last_updated") or "",
         )
         f.done()
@@ -175,7 +192,7 @@ class Defaults:
     user: str | None = None
     port: int | None = None
     ssh_key: str | None = None
-    ssh_options: dict[str, str] = field(default_factory=dict)
+    modules: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         return self == Defaults()
@@ -188,8 +205,9 @@ class Defaults:
             out["port"] = self.port
         if self.ssh_key is not None:
             out["ssh_key"] = self.ssh_key
-        if self.ssh_options:
-            out["ssh_options"] = self.ssh_options
+        modules = {name: data for name, data in self.modules.items() if data}
+        if modules:
+            out["modules"] = modules
         return out
 
     @classmethod
@@ -198,7 +216,7 @@ class Defaults:
         port = f.integer("port")
         if port is not None:
             check_port(port, where)
-        defaults = cls(f.text("user"), port, f.text("ssh_key"), f.mapping("ssh_options"))
+        defaults = cls(f.text("user"), port, f.text("ssh_key"), f.namespaces("modules"))
         f.done()
         return defaults
 
@@ -244,21 +262,17 @@ class Inventory:
                 return host
         return None
 
-    # Effective values: the host's own, else the inventory default, else what ssh would use.
+    # Effective values: the host's own, else the inventory default. A user of None means
+    # "no User line": ssh picks the login of whoever connects, on whichever machine.
 
-    def user(self, host: Host) -> str:
-        return host.user or self.defaults.user or getpass.getuser()
+    def user(self, host: Host) -> str | None:
+        return host.user or self.defaults.user
 
     def port(self, host: Host) -> int:
         return host.port or self.defaults.port or 22
 
     def ssh_key(self, host: Host) -> str | None:
         return host.ssh_key or self.defaults.ssh_key
-
-    def ssh_options(self, host: Host) -> dict[str, str]:
-        merged = {k: v for k, v in self.defaults.ssh_options.items() if _fold_get(host.ssh_options, k) is None}
-        merged.update(host.ssh_options)
-        return merged
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -272,6 +286,8 @@ class Inventory:
     @classmethod
     def from_dict(cls, data: Any, name: str, path: Path) -> "Inventory":
         where = str(path)
+        if isinstance(data, dict) and data.get("version") == 1:
+            data = _upgrade_v1(data)
         f = _Fields(data, where)
         version = f.integer("version", required=True)
         if version != SCHEMA_VERSION:
@@ -298,3 +314,21 @@ class Inventory:
                 raise HostsError(f"{where}: host {host.name!r} appears twice")
             seen.add(key)
         return inventory
+
+
+def _upgrade_v1(data: dict[str, Any]) -> dict[str, Any]:
+    """Version 1 kept ssh options and the Ansible opt-out on the host itself.
+    Version 2 moves them into module namespaces. The file converts on its next save."""
+    data = copy.deepcopy(data)
+    data["version"] = 2
+    defaults = data.get("defaults")
+    if isinstance(defaults, dict) and "ssh_options" in defaults:
+        defaults.setdefault("modules", {})["ssh"] = {"options": defaults.pop("ssh_options")}
+    for host in data.get("hosts") or []:
+        if not isinstance(host, dict):
+            continue
+        if "ssh_options" in host:
+            host.setdefault("modules", {})["ssh"] = {"options": host.pop("ssh_options")}
+        if host.pop("ansible", True) is False:
+            host["exclude"] = ["ansible"]
+    return data

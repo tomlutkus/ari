@@ -31,8 +31,8 @@ $ ari ls
 6 hosts
 
 $ ari export
-wrote ~/.ssh/config.d/10-personal.conf (personal, 4 hosts)
-wrote ~/.ssh/config.d/20-work.conf (work, 2 hosts)
+wrote ~/.ssh/config.d/10-personal.conf (personal, ssh, 4 hosts)
+wrote ~/.ssh/config.d/20-work.conf (work, ssh, 2 hosts)
 ```
 
 Each inventory gets its own file, so work and personal hosts never mix:
@@ -55,6 +55,17 @@ Generated files are output. ari records a hash of everything it writes and won't
 
 Every host is written out in full, with no `Host *` blocks. Those ignore file boundaries, and `IdentityFile` accumulates across matching blocks, so a default in one file would offer its key to every host you have.
 
+## Modules
+
+Every format is a module: one table per module in each inventory's config, and `enabled = false` parks one without losing its settings. The built-in `ssh` module imports and writes OpenSSH client config. Modules hand ari paths and contents and never touch the disk themselves, so the guard and the atomic writes cover all of them.
+
+Modules are found through the `ari.modules` entry point group, the built-in one included. A third-party module is a package that registers there:
+
+```console
+$ uv tool install ari --with ari-netbox
+$ ari modules
+```
+
 ## Status
 
 - [x] Import from existing ssh config, merging repeats and reporting conflicts
@@ -62,7 +73,7 @@ Every host is written out in full, with no `Host *` blocks. Those ignore file bo
 - [x] Hash guard and atomic writes
 - [x] `ls` and `show`
 - [ ] `add`, `edit` and `rm`
-- [ ] Output formats as modules you switch on per inventory
+- [x] Formats as modules you switch on per inventory
 - [ ] Ansible inventory export
 - [ ] TUI, with a key that drops you straight into ssh
 - [ ] NetBox import
@@ -97,8 +108,8 @@ $ ln -sf ~/src/ari/man/ari.1 ~/.local/share/man/man1/ari.1
    ```toml
    default = "personal"
 
-   [inventories.personal]
-   ssh = "~/.ssh/config.d/10-personal.conf"
+   [inventories.personal.ssh]
+   path = "~/.ssh/config.d/10-personal.conf"
    ```
 
 3. Import the file ari will take over, then export it back:

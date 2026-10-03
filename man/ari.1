@@ -15,7 +15,7 @@
 . ftr VB CB
 . ftr VBI CBI
 .\}
-.TH "ARI" "1" "October 2026" "ari 0.2.0" "User Commands"
+.TH "ARI" "1" "October 2026" "ari 0.3.0" "User Commands"
 .hy
 .SH NAME
 .PP
@@ -33,20 +33,27 @@ generate ssh config from them
 .PP
 \f[B]ari show\f[R] \f[I]NAME\f[R]
 .PP
-\f[B]ari import ssh\f[R] \f[I]FILE\f[R]
-[\f[B]--no-ansible\f[R]]
+\f[B]ari modules\f[R]
 .PP
-\f[B]ari export\f[R] [\f[B]ssh\f[R] |
-\f[B]ansible\f[R]] [\f[B]--force\f[R]]
+\f[B]ari import\f[R] \f[I]MODULE\f[R]
+[\f[I]SOURCE\f[R]] [\f[B]--exclude\f[R]
+\f[I]MODULE\f[R]]
+.PP
+\f[B]ari export\f[R] [\f[I]MODULE\f[R]
+\&...]
+[\f[B]--force\f[R]]
 .SH DESCRIPTION
 .PP
 \f[B]ari\f[R] keeps one record per SSH
-host in JSON inventories and writes ssh
-config files from them.
+host in JSON inventories and generates
+files from them through modules.
 Each inventory, such as
 \f[I]personal\f[R] or \f[I]work\f[R], is
 declared in \f[B]config.toml\f[R] with
-its own export targets.
+the modules it uses.
+The built-in \f[B]ssh\f[R] module
+imports and writes OpenSSH client
+config.
 .PP
 Names and aliases are unique across all
 inventories, compared case-insensitively
@@ -129,10 +136,58 @@ Show one host, found by name or alias in
 any inventory, with every field.
 Values inherited from inventory defaults
 are marked \f[B](default)\f[R].
-.SS import ssh \f[I]FILE\f[R]
+.SS modules
 .PP
-Read the Host blocks in \f[I]FILE\f[R]
-into one inventory.
+List the installed modules, whether each
+can import and export, and which
+inventories switch it on.
+Modules that failed to load are listed
+with the reason.
+.SS import \f[I]MODULE\f[R] [\f[I]SOURCE\f[R]]
+.PP
+Read hosts into one inventory through
+\f[I]MODULE\f[R].
+A host already in the inventory is
+merged: new aliases and module data are
+added.
+A different HostName, User, Port or
+IdentityFile is reported as a conflict
+and left alone.
+A host whose name or alias already
+belongs to another inventory is refused.
+.PP
+Importing into an empty inventory sets
+its default user and key to the values
+most hosts share, and each host stores
+only what differs.
+A host the source gives no user or key
+inherits the defaults, with a warning
+naming them.
+Import records the hash of every file it
+reads, so exporting over that same file
+afterwards passes the guard.
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+Option
+T}@T{
+Meaning
+T}
+_
+T{
+\f[B]--exclude\f[R] \f[I]MODULE\f[R]
+T}@T{
+Keep the imported hosts out of
+\f[I]MODULE\f[R]\[aq]s output;
+repeatable
+T}
+.TE
+.PP
+With the \f[B]ssh\f[R] module,
+\f[I]SOURCE\f[R] is a config file.
+It reads the Host blocks in that file.
 The first token on a Host line becomes
 the name and the rest become aliases.
 \f[B]HostName\f[R], \f[B]User\f[R],
@@ -147,51 +202,18 @@ Include lines and options outside any
 Host block are skipped with a warning.
 When a keyword repeats inside a block,
 the first value is kept, as ssh does.
+A block without \f[B]User\f[R] stays
+without one, so ssh uses whoever
+connects; a block without \f[B]Port\f[R]
+is stored as 22, ssh\[aq]s own default.
+.SS export [\f[I]MODULE\f[R] ...]
 .PP
-A host already in the inventory is
-merged: new aliases and options are
-added.
-A different HostName, User, Port or
-IdentityFile is reported as a conflict
-and left alone.
-A host whose name or alias already
-belongs to another inventory is refused.
-.PP
-Importing into an empty inventory sets
-its default user and key to the values
-most hosts share, and each host stores
-only what differs.
-Import records the hash of
-\f[I]FILE\f[R], so exporting over that
-same file afterwards passes the guard.
-.PP
-.TS
-tab(@);
-lw(24.5n) lw(45.5n).
-T{
-Option
-T}@T{
-Meaning
-T}
-_
-T{
-\f[B]--no-ansible\f[R]
-T}@T{
-Mark imported hosts as ssh only, never
-exported to Ansible
-T}
-.TE
-.SS export [ssh | ansible]
-.PP
-Write every target of every inventory,
-or one kind of output, or one inventory
-with \f[B]-i\f[R].
+Write the output of every enabled module
+of every inventory, or only the named
+modules, or one inventory with
+\f[B]-i\f[R].
 Validation and the guard check run
 first; if any fails, nothing is written.
-.PP
-Ansible export is not implemented yet.
-The target is accepted and skipped with
-a note.
 .PP
 .TS
 tab(@);
@@ -251,7 +273,8 @@ narrows them.
 .SH CONFIGURATION
 .PP
 \f[B]config.toml\f[R] declares the
-inventories and where each one exports.
+inventories and the modules each one
+uses, one table per module.
 \f[B]ari\f[R] reads it and never writes
 it.
 .IP
@@ -259,12 +282,15 @@ it.
 \f[C]
 default = \[dq]personal\[dq]
 
-[inventories.personal]
-ssh = \[dq]\[ti]/.ssh/config.d/10-personal.conf\[dq]
+[inventories.personal.ssh]
+path = \[dq]\[ti]/.ssh/config.d/10-personal.conf\[dq]
 
 [inventories.work]
 file = \[dq]\[ti]/work/infra/ari/work.json\[dq]
-ssh = \[dq]\[ti]/.ssh/config.d/20-work.conf\[dq]
+
+[inventories.work.ssh]
+path = \[dq]\[ti]/.ssh/config.d/20-work.conf\[dq]
+enabled = false
 \f[R]
 .fi
 .PP
@@ -291,17 +317,28 @@ Inventory data; defaults to
 \f[V]NAME.json\f[R] beside config.toml
 T}
 T{
-\f[V]inventories.NAME.ssh\f[R]
+\f[V]inventories.NAME.MODULE\f[R]
+T}@T{
+A module this inventory uses, with that
+module\[aq]s settings
+T}
+T{
+\f[V]inventories.NAME.MODULE.enabled\f[R]
+T}@T{
+\f[B]false\f[R] parks the module without
+losing its settings
+T}
+T{
+\f[V]inventories.NAME.ssh.path\f[R]
 T}@T{
 Generated ssh config; absolute or
 starting with \f[B]\[ti]\f[R]
 T}
-T{
-\f[V]inventories.NAME.ansible\f[R]
-T}@T{
-Reserved for Ansible export
-T}
 .TE
+.PP
+A table for a module that isn\[aq]t
+installed is an error, unless it says
+\f[B]enabled = false\f[R].
 .PP
 \f[B]\[ti]/.ssh/config\f[R] pulls the
 generated files in with one line, placed
@@ -312,6 +349,26 @@ before any Host block:
 Include config.d/*.conf
 \f[R]
 .fi
+.SH MODULES
+.PP
+A module turns an inventory into files,
+reads a source into hosts, or both.
+Modules never write to disk themselves:
+they hand \f[B]ari\f[R] paths and
+contents, and \f[B]ari\f[R] does the
+writing, so the guard, the atomic writes
+and the all-or-nothing validation cover
+every module the same way.
+.PP
+Modules are found through the Python
+entry point group \f[B]ari.modules\f[R].
+The built-in \f[B]ssh\f[R] module
+registers there like any other.
+A third-party module is a package that
+registers in that group; install it into
+ari\[aq]s environment with \f[B]uv tool
+install ari --with\f[R]
+\f[I]PACKAGE\f[R].
 .SH INVENTORY FILES
 .PP
 Each inventory is one JSON file.
@@ -321,7 +378,7 @@ inventory \f[B]defaults\f[R].
 .nf
 \f[C]
 {
-  \[dq]version\[dq]: 1,
+  \[dq]version\[dq]: 2,
   \[dq]last_updated\[dq]: \[dq]2026-10-02T21:14:00+01:00\[dq],
   \[dq]defaults\[dq]: {\[dq]user\[dq]: \[dq]tom\[dq], \[dq]ssh_key\[dq]: \[dq]\[ti]/.ssh/id-ed25519\[dq]},
   \[dq]groups\[dq]: {},
@@ -331,6 +388,7 @@ inventory \f[B]defaults\f[R].
       \[dq]hostname\[dq]: \[dq]192.0.2.254\[dq],
       \[dq]aliases\[dq]: [\[dq]storage\[dq]],
       \[dq]user\[dq]: \[dq]root\[dq],
+      \[dq]modules\[dq]: {\[dq]ssh\[dq]: {\[dq]options\[dq]: {\[dq]RequestTTY\[dq]: \[dq]yes\[dq]}}},
       \[dq]last_updated\[dq]: \[dq]2026-10-02T21:14:00+01:00\[dq]
     }
   ]
@@ -369,12 +427,6 @@ T}@T{
 Override the inventory defaults
 T}
 T{
-\f[B]ssh_options\f[R]
-T}@T{
-Any other ssh_config keywords, written
-in order
-T}
-T{
 \f[B]notes\f[R]
 T}@T{
 Written as a comment above the Host
@@ -383,16 +435,35 @@ T}
 T{
 \f[B]groups\f[R], \f[B]reasons\f[R]
 T}@T{
-Ansible group membership; used once
-Ansible export exists
+Group membership, and why; for modules
+that use groups
 T}
 T{
-\f[B]ansible\f[R]
+\f[B]exclude\f[R]
 T}@T{
-\f[B]false\f[R] keeps the host out of
-Ansible export
+Modules whose output leaves this host
+out
+T}
+T{
+\f[B]modules\f[R]
+T}@T{
+Each module\[aq]s own data, under its
+name
+T}
+T{
+\f[V]modules.ssh.options\f[R]
+T}@T{
+Any other ssh_config keywords, written
+in order
 T}
 .TE
+.PP
+Data for a module that isn\[aq]t
+installed is kept as it is, so removing
+a plugin never loses anything.
+A version 1 file, from ari 0.2, is
+upgraded when it\[aq]s read and saved as
+version 2 on its next write.
 .PP
 A file that fails to parse stops
 \f[B]ari\f[R] with the path and the
@@ -401,12 +472,13 @@ It is never treated as empty.
 .SH GENERATED SSH CONFIG
 .PP
 Hosts are sorted by name.
-Each block gets \f[B]HostName\f[R] and
-\f[B]User\f[R], \f[B]Port\f[R] when it
-isn\[aq]t 22, and \f[B]IdentityFile\f[R]
-with \f[B]IdentitiesOnly yes\f[R] when a
-key is set, followed by the host\[aq]s
-other options.
+Each block gets \f[B]HostName\f[R],
+\f[B]User\f[R] when one is set,
+\f[B]Port\f[R] when it isn\[aq]t 22, and
+\f[B]IdentityFile\f[R] with
+\f[B]IdentitiesOnly yes\f[R] when a key
+is set, followed by the host\[aq]s other
+options.
 There are no \f[V]Host *\f[R] blocks:
 they ignore file boundaries, and
 \f[B]IdentityFile\f[R] accumulates
@@ -434,7 +506,7 @@ _
 T{
 \f[V]config.toml\f[R]
 T}@T{
-Inventories and their targets
+Inventories and their modules
 T}
 T{
 \f[V]NAME.json\f[R]
@@ -503,6 +575,15 @@ then regenerate it:
 \f[C]
 ari import ssh \[ti]/.ssh/config.d/10-personal.conf -i personal
 ari export
+\f[R]
+.fi
+.PP
+Bring in hand-kept hosts that must never
+reach Ansible:
+.IP
+.nf
+\f[C]
+ari import ssh \[ti]/.ssh/config.d/20-work.conf -i work --exclude ansible
 \f[R]
 .fi
 .PP

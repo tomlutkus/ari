@@ -1,50 +1,42 @@
-"""config.toml: which inventories exist and where each one exports."""
+"""config.toml: which inventories exist, and which modules each one uses."""
 
+import json
 import os
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .errors import HostsError
-
-APP = "ari"
+from .modules import Module, registry
+from .paths import config_dir, tilde
 
 SAMPLE = """\
 default = "personal"
 
-[inventories.personal]
-ssh = "~/.ssh/config.d/10-personal.conf"
+[inventories.personal.ssh]
+path = "~/.ssh/config.d/10-personal.conf"
 """
 
 _INVENTORY_NAME = re.compile(r"[A-Za-z0-9_-]+")
-_INVENTORY_KEYS = {"file", "ssh", "ansible"}
 
 
-def config_dir() -> Path:
-    return Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser() / APP
-
-
-def state_dir() -> Path:
-    return Path(os.environ.get("XDG_STATE_HOME") or "~/.local/state").expanduser() / APP
-
-
-def tilde(path: Path) -> str:
-    """Shorten a path under $HOME for display."""
-    home = Path.home()
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
+@dataclass
+class ModuleConfig:
+    module: Module
+    enabled: bool
+    settings: Any
 
 
 @dataclass
 class InventoryConfig:
     name: str
     file: Path
-    ssh: Path | None = None
-    ansible: dict[str, Any] | None = None
+    modules: dict[str, ModuleConfig] = field(default_factory=dict)
+
+    def enabled(self) -> list[ModuleConfig]:
+        return [m for m in self.modules.values() if m.enabled]
 
 
 @dataclass
@@ -72,10 +64,18 @@ class Config:
         return [self.get(requested)] if requested else list(self.inventories.values())
 
 
-def _path(value: Any, where: str) -> Path:
-    if not isinstance(value, str) or not value:
-        raise HostsError(f"{where}: expected a path string")
-    return Path(value).expanduser()
+def _module_config(key: str, table: dict[str, Any], where: str) -> ModuleConfig | None:
+    table = dict(table)
+    enabled = table.pop("enabled", True)
+    if not isinstance(enabled, bool):
+        raise HostsError(f"{where}.enabled: use true or false")
+    try:
+        module = registry().get(key)
+    except HostsError as e:
+        if not enabled:
+            return None  # a parked table for a module that isn't installed is fine
+        raise HostsError(f"{where}: {e}") from None
+    return ModuleConfig(module, enabled, module.settings(table, where))
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -92,7 +92,7 @@ def load_config(path: Path | None = None) -> Config:
         raise HostsError(f"{tilde(path)}: unknown keys {sorted(unknown)}")
     tables = data.get("inventories")
     if not isinstance(tables, dict) or not tables:
-        raise HostsError(f"{tilde(path)}: declare at least one [inventories.NAME] table")
+        raise HostsError(f"{tilde(path)}: declare at least one inventory, e.g. [inventories.personal.ssh]")
 
     inventories: dict[str, InventoryConfig] = {}
     for name, table in tables.items():
@@ -101,22 +101,29 @@ def load_config(path: Path | None = None) -> Config:
             raise HostsError(f"{where}: names use letters, digits, _ and - only")
         if not isinstance(table, dict):
             raise HostsError(f"{where}: expected a table")
-        unknown = set(table) - _INVENTORY_KEYS
-        if unknown:
-            raise HostsError(f"{where}: unknown keys {sorted(unknown)}")
 
-        file = _path(table.get("file", f"{name}.json"), f"{where}.file")
+        file = Path(f"{name}.json")
+        modules: dict[str, ModuleConfig] = {}
+        for key, value in table.items():
+            if key == "file":
+                if not isinstance(value, str) or not value:
+                    raise HostsError(f"{where}.file: expected a path string")
+                file = Path(value).expanduser()
+            elif isinstance(value, dict):
+                configured = _module_config(key, value, f"{where}.{key}")
+                if configured:
+                    modules[key] = configured
+            elif key in registry().modules:
+                hint = f"\npath = {json.dumps(value)}" if key == "ssh" and isinstance(value, str) else ""
+                raise HostsError(
+                    f"{where}.{key}: module settings are a table now. Replace it with:\n\n"
+                    f"[inventories.{name}.{key}]{hint}\n"
+                )
+            else:
+                raise HostsError(f"{where}: unknown key {key!r}")
         if not file.is_absolute():
             file = path.parent / file
-        ssh = None
-        if "ssh" in table:
-            ssh = _path(table["ssh"], f"{where}.ssh")
-            if not ssh.is_absolute():
-                raise HostsError(f"{where}.ssh: use an absolute path or one starting with ~")
-        ansible = table.get("ansible")
-        if ansible is not None and not isinstance(ansible, dict):
-            raise HostsError(f"{where}.ansible: expected a table")
-        inventories[name] = InventoryConfig(name, file, ssh, ansible)
+        inventories[name] = InventoryConfig(name, file, modules)
 
     default = data.get("default")
     if default is not None and default not in inventories:

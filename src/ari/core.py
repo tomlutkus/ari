@@ -4,11 +4,13 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import sshconf, storage
-from .config import Config, tilde
+from . import storage
+from .config import Config
 from .errors import HostsError
 from .guard import Guard, Status
-from .models import Host, Inventory, now
+from .models import MODULE_NAME, Host, Inventory, now
+from .modules import Module, registry
+from .paths import tilde
 
 
 def load_all(cfg: Config) -> dict[str, Inventory]:
@@ -27,8 +29,16 @@ def _haystack(host: Host) -> list[str]:
         host.ssh_key or "",
         host.notes,
         *host.groups,
-        *host.ssh_options.values(),
+        *(str(v) for data in host.modules.values() for v in _flatten(data)),
     ]
+
+
+def _flatten(value: object) -> list[object]:
+    if isinstance(value, dict):
+        return [x for v in value.values() for x in _flatten(v)]
+    if isinstance(value, list):
+        return [x for v in value for x in _flatten(v)]
+    return [value]
 
 
 def list_hosts(
@@ -53,6 +63,22 @@ def find_host(cfg: Config, token: str) -> tuple[Inventory, Host]:
         if host:
             return inventory, host
     raise HostsError(f"no host named {token!r} in any inventory")
+
+
+@dataclass
+class ModuleStatus:
+    module: Module
+    inventories: dict[str, bool]  # inventory name: enabled
+
+
+def module_status(cfg: Config) -> tuple[list[ModuleStatus], dict[str, str]]:
+    """Every installed module, where it's switched on, and any that failed to load."""
+    reg = registry()
+    rows = []
+    for name, module in reg.modules.items():
+        where = {ic.name: ic.modules[name].enabled for ic in cfg.inventories.values() if name in ic.modules}
+        rows.append(ModuleStatus(module, where))
+    return rows, dict(reg.failures)
 
 
 # Validation
@@ -101,26 +127,32 @@ def _infer_defaults(inventory: Inventory, hosts: list[Host]) -> dict[str, str]:
     return chosen
 
 
+def _module(name: str) -> Module:
+    """The installed module, or the base behaviour for data whose module isn't installed."""
+    return registry().modules.get(name) or Module()
+
+
 def _strip_defaults(inventory: Inventory, host: Host) -> None:
     """Store only what differs from the inventory defaults."""
     d = inventory.defaults
-    if host.user == d.user:
+    if host.user is not None and host.user == d.user:
         host.user = None
     if host.port == (d.port or 22):
         host.port = None
     if host.ssh_key is not None and host.ssh_key == d.ssh_key:
         host.ssh_key = None
-    for k, v in d.ssh_options.items():
-        if host.ssh_options.get(k) == v:
-            del host.ssh_options[k]
+    for name, data in host.modules.items():
+        _module(name).strip_defaults(d.modules.get(name, {}), data)
+    host.modules = {name: data for name, data in host.modules.items() if data}
 
 
 def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | None:
     if incoming.hostname != existing.hostname:
         return f"HostName {incoming.hostname} differs from {existing.hostname}"
-    if incoming.user != inventory.user(existing):
-        return f"User {incoming.user} differs from {inventory.user(existing)}"
-    if incoming.port != inventory.port(existing):
+    user = inventory.user(existing)
+    if incoming.user and user and incoming.user != user:
+        return f"User {incoming.user} differs from {user}"
+    if incoming.port and incoming.port != inventory.port(existing):
         return f"Port {incoming.port} differs from {inventory.port(existing)}"
     key = inventory.ssh_key(existing)
     if incoming.ssh_key and key and incoming.ssh_key != key:
@@ -136,36 +168,38 @@ def _merge(inventory: Inventory, existing: Host, incoming: Host) -> bool:
             existing.aliases.append(alias)
             have.add(alias.casefold())
             changed = True
+    if incoming.user and not inventory.user(existing):
+        existing.user = incoming.user
+        changed = True
     if incoming.ssh_key and not inventory.ssh_key(existing):
         existing.ssh_key = incoming.ssh_key
         changed = True
-    current = {k.casefold() for k in inventory.ssh_options(existing)}
-    for k, v in incoming.ssh_options.items():
-        if k.casefold() not in current:
-            existing.ssh_options[k] = v
-            changed = True
+    for name, data in incoming.modules.items():
+        target = existing.modules.setdefault(name, {})
+        changed |= _module(name).merge(target, data)
+    existing.modules = {name: data for name, data in existing.modules.items() if data}
     return changed
 
 
-def import_ssh(cfg: Config, inventory_name: str, file: Path, ansible: bool = True) -> ImportReport:
-    path = file.expanduser()
-    try:
-        data = path.read_bytes()
-        text = data.decode("utf-8")
-    except OSError as e:
-        raise HostsError(f"{tilde(path)}: {e.strerror}") from None
-    except UnicodeDecodeError:
-        raise HostsError(f"{tilde(path)}: not UTF-8 text") from None
+def import_hosts(
+    cfg: Config, inventory_name: str, module_name: str, source: str | None = None, exclude: list[str] | None = None
+) -> ImportReport:
+    module = registry().get(module_name)
+    if not module.imports:
+        raise HostsError(f"the {module_name} module can't import")
+    exclude = sorted(set(exclude or []))
+    for name in exclude:
+        if not MODULE_NAME.fullmatch(name):
+            raise HostsError(f"--exclude {name!r} isn't a module name")
 
+    result = module.read(source)
     inventories = load_all(cfg)
     target = inventories[cfg.get(inventory_name).name]
-    report = ImportReport(target.name, tilde(path))
-
-    blocks, report.warnings = sshconf.parse(text, tilde(path))
-    incoming = [h for b in blocks if (h := sshconf.to_host(b, tilde(path), report.warnings))]
+    label = tilde(result.files[0][0]) if result.files else (source or module_name)
+    report = ImportReport(target.name, label, warnings=list(result.warnings))
 
     if not target.hosts and target.defaults.is_empty():
-        report.defaults_set = _infer_defaults(target, incoming)
+        report.defaults_set = _infer_defaults(target, result.hosts)
 
     elsewhere = {
         token.casefold(): f"{inv.name}/{host.name}"
@@ -175,17 +209,19 @@ def import_ssh(cfg: Config, inventory_name: str, file: Path, ansible: bool = Tru
         for token in host.tokens()
     }
 
-    for host in incoming:
+    for host in result.hosts:
         clash = next((elsewhere[t.casefold()] for t in host.tokens() if t.casefold() in elsewhere), None)
         if clash:
             report.conflicts.append(f"{host.name}: already defined as {clash}")
             continue
         existing = target.find(host.name)
         if existing is None:
+            if host.user is None and target.defaults.user:
+                report.warnings.append(f"{host.name}: no User in the source; the default user {target.defaults.user} will apply")
             if host.ssh_key is None and target.defaults.ssh_key:
                 report.warnings.append(f"{host.name}: no IdentityFile in the source; the default key will apply")
             _strip_defaults(target, host)
-            host.ansible = ansible
+            host.exclude = list(exclude)
             host.last_updated = now()
             target.hosts.append(host)
             report.added.append(host.name)
@@ -201,9 +237,11 @@ def import_ssh(cfg: Config, inventory_name: str, file: Path, ansible: bool = Tru
 
     if report.added or report.merged or report.defaults_set:
         storage.save(target)
-    guard = Guard()
-    guard.record(path, data)
-    guard.save()
+    if result.files:
+        guard = Guard()
+        for path, data in result.files:
+            guard.record(path, data)
+        guard.save()
     return report
 
 
@@ -215,7 +253,7 @@ class Planned:
     path: Path
     data: bytes
     inventory: str
-    kind: str
+    module: str
     hosts: int
 
 
@@ -231,30 +269,36 @@ class ExportReport:
     notes: list[str] = field(default_factory=list)
 
 
-def export(cfg: Config, scope: str | None = None, targets: frozenset[str] = frozenset({"ssh", "ansible"}), force: bool = False) -> ExportReport:
+def export(cfg: Config, scope: str | None = None, only: list[str] | None = None, force: bool = False) -> ExportReport:
     """Validate everything, check every target against the guard, then write. Any failure writes nothing."""
+    for name in only or []:
+        registry().get(name)
     inventories = load_all(cfg)
     problems = name_problems(list(inventories.values()))
-    if problems:
-        raise HostsError("export stopped, nothing written:\n  " + "\n  ".join(problems))
 
     report = ExportReport()
     planned: list[Planned] = []
     for ic in cfg.scope(scope):
         inventory = inventories[ic.name]
-        if "ssh" in targets:
-            if ic.ssh is None:
-                report.notes.append(f"{ic.name}: no ssh target in config, skipped")
-            else:
-                data = sshconf.render(inventory).encode("utf-8")
-                planned.append(Planned(ic.ssh, data, ic.name, "ssh", len(inventory.hosts)))
-        if "ansible" in targets and ic.ansible is not None:
-            report.notes.append(f"{ic.name}: Ansible export isn't built yet, skipped")
+        for mc in ic.enabled():
+            module = mc.module
+            if not module.exports or (only and module.name not in only):
+                continue
+            hosts = [h for h in inventory.hosts if module.name not in h.exclude]
+            problems += [f"{ic.name}/{module.name}: {p}" for p in module.validate(inventory, hosts, mc.settings)]
+            for out in module.export(inventory, hosts, mc.settings):
+                planned.append(Planned(out.path, out.data, ic.name, module.name, out.hosts))
+
+    if problems:
+        raise HostsError("export stopped, nothing written:\n  " + "\n  ".join(problems))
+    if not planned:
+        report.notes.append("nothing to export: no enabled module writes files here")
+        return report
 
     paths = Counter(p.path.resolve() for p in planned)
     shared = [tilde(p) for p, n in paths.items() if n > 1]
     if shared:
-        raise HostsError(f"export stopped, nothing written: several inventories write {', '.join(shared)}")
+        raise HostsError(f"export stopped, nothing written: more than one target writes {', '.join(shared)}")
 
     guard = Guard()
     checked = [(p, guard.status(p.path, p.data)) for p in planned]

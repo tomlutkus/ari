@@ -2,7 +2,7 @@
 title: ARI
 section: 1
 header: User Commands
-footer: ari 0.2.0
+footer: ari 0.3.0
 date: October 2026
 ---
 
@@ -18,13 +18,15 @@ ari - keep SSH hosts in one place and generate ssh config from them
 
 **ari show** *NAME*
 
-**ari import ssh** *FILE* [**--no-ansible**]
+**ari modules**
 
-**ari export** [**ssh** | **ansible**] [**--force**]
+**ari import** *MODULE* [*SOURCE*] [**--exclude** *MODULE*]
+
+**ari export** [*MODULE* ...] [**--force**]
 
 # DESCRIPTION
 
-**ari** keeps one record per SSH host in JSON inventories and writes ssh config files from them. Each inventory, such as *personal* or *work*, is declared in **config.toml** with its own export targets.
+**ari** keeps one record per SSH host in JSON inventories and generates files from them through modules. Each inventory, such as *personal* or *work*, is declared in **config.toml** with the modules it uses. The built-in **ssh** module imports and writes OpenSSH client config.
 
 Names and aliases are unique across all inventories, compared case-insensitively the way ssh compares them. Every generated file lands in one ssh namespace where the first match wins, so a duplicate would silently shadow a host.
 
@@ -61,25 +63,27 @@ List hosts across every inventory, or only the one named with **-i**. User and p
 
 Show one host, found by name or alias in any inventory, with every field. Values inherited from inventory defaults are marked **(default)**.
 
-## import ssh *FILE*
+## modules
 
-Read the Host blocks in *FILE* into one inventory. The first token on a Host line becomes the name and the rest become aliases. **HostName**, **User**, **Port** and **IdentityFile** become fields, **IdentitiesOnly yes** is implied by a key, and every other keyword is kept as an ssh option, in order.
+List the installed modules, whether each can import and export, and which inventories switch it on. Modules that failed to load are listed with the reason.
 
-Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, the first value is kept, as ssh does.
+## import *MODULE* [*SOURCE*]
 
-A host already in the inventory is merged: new aliases and options are added. A different HostName, User, Port or IdentityFile is reported as a conflict and left alone. A host whose name or alias already belongs to another inventory is refused.
+Read hosts into one inventory through *MODULE*. A host already in the inventory is merged: new aliases and module data are added. A different HostName, User, Port or IdentityFile is reported as a conflict and left alone. A host whose name or alias already belongs to another inventory is refused.
 
-Importing into an empty inventory sets its default user and key to the values most hosts share, and each host stores only what differs. Import records the hash of *FILE*, so exporting over that same file afterwards passes the guard.
+Importing into an empty inventory sets its default user and key to the values most hosts share, and each host stores only what differs. A host the source gives no user or key inherits the defaults, with a warning naming them. Import records the hash of every file it reads, so exporting over that same file afterwards passes the guard.
 
 | Option | Meaning |
 |-------|-------------|
-| **--no-ansible** | Mark imported hosts as ssh only, never exported to Ansible |
+| **--exclude** *MODULE* | Keep the imported hosts out of *MODULE*'s output; repeatable |
 
-## export [ssh | ansible]
+With the **ssh** module, *SOURCE* is a config file. It reads the Host blocks in that file. The first token on a Host line becomes the name and the rest become aliases. **HostName**, **User**, **Port** and **IdentityFile** become fields, **IdentitiesOnly yes** is implied by a key, and every other keyword is kept as an ssh option, in order.
 
-Write every target of every inventory, or one kind of output, or one inventory with **-i**. Validation and the guard check run first; if any fails, nothing is written.
+Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, the first value is kept, as ssh does. A block without **User** stays without one, so ssh uses whoever connects; a block without **Port** is stored as 22, ssh's own default.
 
-Ansible export is not implemented yet. The target is accepted and skipped with a note.
+## export [*MODULE* ...]
+
+Write the output of every enabled module of every inventory, or only the named modules, or one inventory with **-i**. Validation and the guard check run first; if any fails, nothing is written.
 
 | Option | Meaning |
 |-------|-------------|
@@ -97,25 +101,31 @@ Ansible export is not implemented yet. The target is accepted and skipped with a
 
 # CONFIGURATION
 
-**config.toml** declares the inventories and where each one exports. **ari** reads it and never writes it.
+**config.toml** declares the inventories and the modules each one uses, one table per module. **ari** reads it and never writes it.
 
 ```toml
 default = "personal"
 
-[inventories.personal]
-ssh = "~/.ssh/config.d/10-personal.conf"
+[inventories.personal.ssh]
+path = "~/.ssh/config.d/10-personal.conf"
 
 [inventories.work]
 file = "~/work/infra/ari/work.json"
-ssh = "~/.ssh/config.d/20-work.conf"
+
+[inventories.work.ssh]
+path = "~/.ssh/config.d/20-work.conf"
+enabled = false
 ```
 
 | Key | Meaning |
 |-------|-------------|
 | **default** | Inventory used by **import** when **-i** and **ARI_INVENTORY** are unset |
 | `inventories.NAME.file` | Inventory data; defaults to `NAME.json` beside config.toml |
-| `inventories.NAME.ssh` | Generated ssh config; absolute or starting with **~** |
-| `inventories.NAME.ansible` | Reserved for Ansible export |
+| `inventories.NAME.MODULE` | A module this inventory uses, with that module's settings |
+| `inventories.NAME.MODULE.enabled` | **false** parks the module without losing its settings |
+| `inventories.NAME.ssh.path` | Generated ssh config; absolute or starting with **~** |
+
+A table for a module that isn't installed is an error, unless it says **enabled = false**.
 
 **~/.ssh/config** pulls the generated files in with one line, placed before any Host block:
 
@@ -123,13 +133,19 @@ ssh = "~/.ssh/config.d/20-work.conf"
 Include config.d/*.conf
 ```
 
+# MODULES
+
+A module turns an inventory into files, reads a source into hosts, or both. Modules never write to disk themselves: they hand **ari** paths and contents, and **ari** does the writing, so the guard, the atomic writes and the all-or-nothing validation cover every module the same way.
+
+Modules are found through the Python entry point group **ari.modules**. The built-in **ssh** module registers there like any other. A third-party module is a package that registers in that group; install it into ari's environment with **uv tool install ari --with** *PACKAGE*.
+
 # INVENTORY FILES
 
 Each inventory is one JSON file. Hosts store only what differs from the inventory **defaults**.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "last_updated": "2026-10-02T21:14:00+01:00",
   "defaults": {"user": "tom", "ssh_key": "~/.ssh/id-ed25519"},
   "groups": {},
@@ -139,6 +155,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
       "hostname": "192.0.2.254",
       "aliases": ["storage"],
       "user": "root",
+      "modules": {"ssh": {"options": {"RequestTTY": "yes"}}},
       "last_updated": "2026-10-02T21:14:00+01:00"
     }
   ]
@@ -151,16 +168,19 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 | **hostname** | Address ssh connects to; required |
 | **aliases** | More names on the Host line |
 | **user**, **port**, **ssh_key** | Override the inventory defaults |
-| **ssh_options** | Any other ssh_config keywords, written in order |
 | **notes** | Written as a comment above the Host block |
-| **groups**, **reasons** | Ansible group membership; used once Ansible export exists |
-| **ansible** | **false** keeps the host out of Ansible export |
+| **groups**, **reasons** | Group membership, and why; for modules that use groups |
+| **exclude** | Modules whose output leaves this host out |
+| **modules** | Each module's own data, under its name |
+| `modules.ssh.options` | Any other ssh_config keywords, written in order |
+
+Data for a module that isn't installed is kept as it is, so removing a plugin never loses anything. A version 1 file, from ari 0.2, is upgraded when it's read and saved as version 2 on its next write.
 
 A file that fails to parse stops **ari** with the path and the error. It is never treated as empty.
 
 # GENERATED SSH CONFIG
 
-Hosts are sorted by name. Each block gets **HostName** and **User**, **Port** when it isn't 22, and **IdentityFile** with **IdentitiesOnly yes** when a key is set, followed by the host's other options. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
+Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, and **IdentityFile** with **IdentitiesOnly yes** when a key is set, followed by the host's other options. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
 
 Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file.
 
@@ -168,7 +188,7 @@ Every write goes to `FILE.tmp` beside the target and is then renamed over it. `I
 
 | File | Contents |
 |-------|-------------|
-| `config.toml` | Inventories and their targets |
+| `config.toml` | Inventories and their modules |
 | `NAME.json` | Inventory data, one file per inventory |
 | `exports.json` | Hashes of exported files, for the guard |
 
@@ -193,6 +213,12 @@ Take over an existing ssh config file, then regenerate it:
 ```
 ari import ssh ~/.ssh/config.d/10-personal.conf -i personal
 ari export
+```
+
+Bring in hand-kept hosts that must never reach Ansible:
+
+```
+ari import ssh ~/.ssh/config.d/20-work.conf -i work --exclude ansible
 ```
 
 Find every host on a subnet:

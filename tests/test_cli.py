@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from conftest import FIXTURES, copy_fixture
+from conftest import FIXTURES, copy_fixture, write_config
 from ari.cli import main
 
 
@@ -71,7 +71,7 @@ def test_guard_refuses_unknown_and_edited_files(personal, capsys):
 
 
 def test_inventory_flag_after_subcommand(both, capsys):
-    assert run("import", "ssh", str(FIXTURES / "legacy.conf"), "-i", "work", "--no-ansible") == 0
+    assert run("import", "ssh", str(FIXTURES / "legacy.conf"), "-i", "work", "--exclude", "ansible") == 0
     capsys.readouterr()
     assert run("ls", "-i", "work") == 0
     listing = capsys.readouterr().out
@@ -107,9 +107,57 @@ def test_show_marks_inherited_values(personal, capsys):
     assert "root" in shown and "(default)" in shown
 
 
-def test_ansible_target_is_noted_not_built(both, capsys):
+def test_parked_module_for_missing_plugin_does_not_block_export(both, capsys):
     assert run("export") == 0
-    assert "Ansible export isn't built yet" in capsys.readouterr().err
+    out = capsys.readouterr().out
+    assert "10-personal.conf (personal, ssh, 0 hosts)" in out and "20-work.conf (work, ssh, 0 hosts)" in out
+
+
+def test_exclude_keeps_a_host_out_of_that_module(personal, tmp_path):
+    run("import", "ssh", str(FIXTURES / "personal.conf"))
+    side = tmp_path / "side.conf"
+    side.write_text("Host scratch\n  HostName 192.0.2.77\n  User tom\n")
+    assert run("import", "ssh", str(side), "--exclude", "ssh") == 0
+    run("export")
+    assert "scratch" not in (personal / "ssh" / "10-personal.conf").read_text()
+    stored = next(h for h in personal_json(personal)["hosts"] if h["name"] == "scratch")
+    assert stored["exclude"] == ["ssh"]
+
+
+def test_disabled_module_writes_nothing(home, capsys):
+    write_config(home, '[inventories.personal.ssh]\npath = "SSH/10-personal.conf"\nenabled = false\n')
+    assert run("export") == 0
+    assert "nothing to export" in capsys.readouterr().err
+    assert not (home / "ssh" / "10-personal.conf").exists()
+
+
+def test_export_only_named_modules(personal, capsys):
+    assert run("export", "ssh") == 0
+    assert run("export", "nope") == 1
+    assert "unknown module 'nope'" in capsys.readouterr().err
+
+
+def test_missing_user_inherits_default_with_a_warning(personal, tmp_path, capsys):
+    run("import", "ssh", str(FIXTURES / "personal.conf"))
+    loose = tmp_path / "loose.conf"
+    loose.write_text("Host spare\n  HostName 192.0.2.88\n")
+    capsys.readouterr()
+    assert run("import", "ssh", str(loose)) == 0
+    assert "no User in the source; the default user tom will apply" in capsys.readouterr().err
+    stored = next(h for h in personal_json(personal)["hosts"] if h["name"] == "spare")
+    assert "user" not in stored
+
+
+def test_modules_lists_what_is_installed_and_where(both, capsys):
+    assert run("modules") == 0
+    listing = capsys.readouterr().out
+    assert "ssh" in listing and "personal, work" in listing
+
+
+def test_old_ssh_string_form_explains_the_fix(home, capsys):
+    write_config(home, '[inventories.personal]\nssh = "SSH/10-personal.conf"\n')
+    assert run("ls") == 1
+    assert "[inventories.personal.ssh]" in capsys.readouterr().err
 
 
 @pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the ssh client")

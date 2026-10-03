@@ -5,8 +5,8 @@ import json
 from enum import Enum
 from pathlib import Path
 
-from .config import state_dir, tilde
 from .errors import HostsError
+from .paths import state_dir, tilde
 from .storage import atomic_write
 
 

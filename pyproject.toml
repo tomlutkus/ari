@@ -1,6 +1,6 @@
 [project]
 name = "ari"
-version = "0.2.0"
+version = "0.3.0"
 description = "One record per SSH host; generates ssh config and Ansible inventory"
 readme = "README.md"
 authors = [{ name = "Thomas Lutkus", email = "thomas@lutkus.net" }]
@@ -14,6 +14,10 @@ dependencies = [
 
 [project.scripts]
 ari = "ari.cli:main"
+
+# Built-in modules register exactly the way third-party ones do.
+[project.entry-points."ari.modules"]
+ssh = "ari.modules.ssh:SshModule"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13"]
