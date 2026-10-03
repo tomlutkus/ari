@@ -2,6 +2,14 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
+## 0.4.1 (2026-10-04)
+
+- `show` honours `-i`: it looks only in that inventory, and an undeclared one is an error instead of being ignored.
+- `ls --search` matches what `ls` shows. User, port and key match their effective values, inherited from the defaults or not, so `--search 2222` finds a host whose PORT column says 2222. Reasons and `exclude` match too.
+- `export` stops before any module renders once a check has failed. Modules only ever see data that passed.
+- Ansible files are written with mode 0644; ssh config and inventories stay 0600. A module sets the mode per file it returns, 0600 unless it says otherwise. `export` corrects the mode of a file whose contents are already right and says so.
+- The test named for a missing plugin was parking the installed ansible module. It's renamed, and a real missing-plugin test sits beside it.
+
 ## 0.4.0 (2026-10-03)
 
 - `add`, `edit` and `rm`. Every write is checked first: names and aliases unique across inventories, groups declared, reasons valid. A refused write lists every problem and saves nothing.

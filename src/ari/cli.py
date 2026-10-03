@@ -63,7 +63,7 @@ def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
 
 
 def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
-    inventory, host = core.find_host(cfg, args.name)
+    inventory, host = core.find_host(cfg, args.name, _inventory_arg(args))
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim")
     grid.add_column()
@@ -215,7 +215,8 @@ def cmd_export(cfg: Config, args: argparse.Namespace) -> int:
     for w in report.written:
         p = w.planned
         verb = "unchanged" if w.status is Status.SAME else "wrote"
-        out.print(f"{verb} {tilde(p.path)} ({p.inventory}, {p.module}, {_plural(p.hosts, 'host')})", soft_wrap=True)
+        mode = f"; mode set to {p.mode:04o}" if w.mode_fixed else ""
+        out.print(f"{verb} {tilde(p.path)} ({p.inventory}, {p.module}, {_plural(p.hosts, 'host')}){mode}", soft_wrap=True)
     for note in report.notes:
         _note("note", "dim", note)
     return 0
@@ -280,7 +281,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     ls = sub.add_parser("ls", parents=[common], help="list hosts across inventories")
-    ls.add_argument("--search", metavar="TEXT", help="match any field, case-insensitively")
+    ls.add_argument(
+        "--search", metavar="TEXT", help="match any field, effective user, port and key included; case-insensitive"
+    )
     ls.add_argument("--group", metavar="GROUP", help="only hosts in this group")
     ls.set_defaults(func=cmd_ls)
 

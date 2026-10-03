@@ -2,7 +2,7 @@
 title: ARI
 section: 1
 header: User Commands
-footer: ari 0.4.0
+footer: ari 0.4.1
 date: October 2026
 ---
 
@@ -64,12 +64,12 @@ List hosts across every inventory, or only the one named with **-i**. User and p
 
 | Option | Meaning |
 |-------|-------------|
-| **--search** *TEXT* | Only hosts with *TEXT* in any field, case-insensitive |
+| **--search** *TEXT* | Only hosts with *TEXT* in any field, case-insensitive. User, port and key match their effective values, defaults included |
 | **--group** *GROUP* | Only hosts in *GROUP* |
 
 ## show *NAME*
 
-Show one host, found by name or alias in any inventory, with every field. Values inherited from inventory defaults are marked **(default)**, and a group's reason shows in parentheses after it.
+Show one host, found by name or alias in any inventory, with every field. **-i** narrows the search to one inventory. Values inherited from inventory defaults are marked **(default)**, and a group's reason shows in parentheses after it.
 
 ## add *NAME* *HOSTNAME*
 
@@ -125,7 +125,7 @@ With the **ansible** module, *SOURCE* is an inventory directory, and every **.ym
 
 ## export [*MODULE* ...]
 
-Write the output of every enabled module of every inventory, or only the named modules, or one inventory with **-i**. Validation and the guard check run first; if any fails, nothing is written.
+Write the output of every enabled module of every inventory, or only the named modules, or one inventory with **-i**. Validation and the guard check run first; if any fails, nothing is written. A file whose contents are already right is left alone, apart from its mode if that differs.
 
 | Option | Meaning |
 |-------|-------------|
@@ -139,7 +139,7 @@ Write the output of every enabled module of every inventory, or only the named m
 | **-h**, **--help** | Show help for **ari** or for one command |
 | **--version** | Show the version |
 
-**add** and **import** write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. **ls** and **export** cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is.
+**add** and **import** write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. **ls**, **show** and **export** cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
 
 # CONFIGURATION
 
@@ -250,7 +250,7 @@ A file that fails to parse stops **ari** with the path and the error. It is neve
 
 Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, and **IdentityFile** with **IdentitiesOnly yes** when a key is set, followed by the host's other options. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
 
-Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file.
+Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file. The file gets mode 0600, as do the inventories.
 
 # GENERATED ANSIBLE INVENTORY
 
@@ -259,6 +259,8 @@ The hosts file gets **all.vars** from the defaults, in the order **ansible_user*
 Each file in the **groups** table holds the groups its globs match, in declaration order, under `all: children:`, one blank line before each group. A group lists its children first, then its hosts in the hosts file's order. Hosts without a reason come first; then each reason, in the order its group declares them, writes its text as a comment followed by its hosts.
 
 Values are written plain when YAML reads them back unchanged, and double-quoted otherwise. The same inventory always produces the same bytes, so a diff of the generated files shows only real changes. Files in the directory that the **groups** table doesn't name are never touched.
+
+The files get mode 0644, so anyone who runs playbooks from the repository can read them.
 
 # FILES
 

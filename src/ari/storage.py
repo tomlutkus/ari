@@ -2,6 +2,7 @@
 
 import json
 import os
+import stat
 from pathlib import Path
 
 from .config import InventoryConfig
@@ -26,6 +27,14 @@ def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def set_mode(path: Path, mode: int) -> bool:
+    """Give an existing file the mode it would get if written now. Reports whether it changed."""
+    if stat.S_IMODE(path.stat().st_mode) == mode:
+        return False
+    os.chmod(path, mode)
+    return True
 
 
 def load(ic: InventoryConfig) -> Inventory:

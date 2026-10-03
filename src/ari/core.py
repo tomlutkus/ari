@@ -21,15 +21,20 @@ def load_all(cfg: Config) -> dict[str, Inventory]:
 # Reading
 
 
-def _haystack(host: Host) -> list[str]:
+def _haystack(inventory: Inventory, host: Host) -> list[str]:
+    """What a search looks through: what ls shows, with user, port and key as they take effect,
+    inherited from the inventory defaults or not, plus everything else on the record."""
     return [
         host.name,
         host.hostname,
         *host.aliases,
-        host.user or "",
-        host.ssh_key or "",
+        inventory.user(host) or "",
+        str(inventory.port(host)),
+        inventory.ssh_key(host) or "",
         host.notes,
         *host.groups,
+        *host.reasons.values(),
+        *host.exclude,
         *(str(v) for data in host.modules.values() for v in _flatten(data)),
     ]
 
@@ -52,7 +57,7 @@ def list_hosts(
         for host in inventory.hosts:
             if group and group not in host.groups:
                 continue
-            if needle and not any(needle in s.casefold() for s in _haystack(host)):
+            if needle and not any(needle in s.casefold() for s in _haystack(inventory, host)):
                 continue
             rows.append((inventory, host))
     return rows
@@ -67,7 +72,9 @@ def _locate(cfg: Config, inventories: dict[str, Inventory], token: str, scope: s
 
 
 def find_host(cfg: Config, token: str, scope: str | None = None) -> tuple[Inventory, Host]:
-    return _locate(cfg, load_all(cfg), token, scope)
+    """A host by name or alias, in the inventory named by scope or in any. Only what's searched is read."""
+    inventories = {ic.name: storage.load(ic) for ic in cfg.scope(scope)}
+    return _locate(cfg, inventories, token, scope)
 
 
 @dataclass
@@ -570,12 +577,14 @@ class Planned:
     inventory: str
     module: str
     hosts: int
+    mode: int
 
 
 @dataclass
 class Written:
     planned: Planned
     status: Status
+    mode_fixed: bool = False  # the bytes already matched; only the file mode was corrected
 
 
 @dataclass
@@ -592,7 +601,7 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
     problems = name_problems(list(inventories.values()))
 
     report = ExportReport()
-    planned: list[Planned] = []
+    targets = []
     for ic in cfg.scope(scope):
         inventory = inventories[ic.name]
         problems += group_problems(inventory)
@@ -602,11 +611,16 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
                 continue
             hosts = [h for h in inventory.hosts if module.name not in h.exclude]
             problems += [f"{ic.name}/{module.name}: {p}" for p in module.validate(inventory, hosts, mc.settings)]
-            for out in module.export(inventory, hosts, mc.settings):
-                planned.append(Planned(out.path, out.data, ic.name, module.name, out.hosts))
+            targets.append((ic.name, inventory, mc, hosts))
 
+    # Every check, every inventory, before any module renders: export only ever sees data that passed.
     if problems:
         raise HostsError("export stopped, nothing written:\n  " + "\n  ".join(problems))
+    planned = [
+        Planned(out.path, out.data, name, mc.module.name, out.hosts, out.mode)
+        for name, inventory, mc, hosts in targets
+        for out in mc.module.export(inventory, hosts, mc.settings)
+    ]
     if not planned:
         report.notes.append("nothing to export: no enabled module writes files here")
         return report
@@ -629,9 +643,12 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
         )
 
     for p, s in checked:
-        if s is not Status.SAME:
-            storage.atomic_write(p.path, p.data)
+        fixed = False
+        if s is Status.SAME:
+            fixed = storage.set_mode(p.path, p.mode)  # no write to carry the mode, so set it here
+        else:
+            storage.atomic_write(p.path, p.data, p.mode)
         guard.record(p.path, p.data)
-        report.written.append(Written(p, s))
+        report.written.append(Written(p, s, fixed))
     guard.save()
     return report

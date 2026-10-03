@@ -4,8 +4,12 @@ import subprocess
 
 import pytest
 
-from conftest import FIXTURES, copy_fixture, write_config
+from conftest import FIXTURES, PERSONAL_ONLY, copy_fixture, write_config
+from ari import core
 from ari.cli import main
+from ari.config import load_config
+from ari.modules import registry
+from ari.modules.ssh import SshModule
 
 
 def run(*argv):
@@ -107,10 +111,108 @@ def test_show_marks_inherited_values(personal, capsys):
     assert "root" in shown and "(default)" in shown
 
 
-def test_parked_module_for_missing_plugin_does_not_block_export(both, capsys):
+def test_show_honours_the_inventory_flag(both, capsys):
+    run("import", "ssh", str(FIXTURES / "personal.conf"))
+    capsys.readouterr()
+    assert run("show", "-i", "personal", "storage") == 0
+    assert "nas" in capsys.readouterr().out
+    assert run("show", "-i", "work", "storage") == 1
+    assert "no host named 'storage' in work" in capsys.readouterr().err
+    assert run("-i", "nope", "show", "storage") == 1
+    assert "no inventory 'nope'" in capsys.readouterr().err
+
+
+def test_show_reads_only_the_inventory_it_was_given(both, capsys):
+    run("import", "ssh", str(FIXTURES / "personal.conf"))
+    (both / "config" / "ari" / "work.json").write_text("{not json")
+    capsys.readouterr()
+    assert run("show", "-i", "personal", "nas") == 0
+    assert run("show", "nas") == 1
+    assert "work.json: not valid JSON" in capsys.readouterr().err
+
+
+def search_inventory(home):
+    """Hosts whose user, port and key come from the defaults, plus reasons and exclude."""
+    write_config(home, PERSONAL_ONLY)
+    (home / "config" / "ari" / "personal.json").write_text(json.dumps({
+        "version": 2,
+        "defaults": {"user": "deploy", "port": 2222, "ssh_key": "~/.ssh/lab-ed25519"},
+        "groups": {"no_auto_update": {"reasons": {"secrets": "secrets and prod path"}}},
+        "hosts": [
+            {"name": "inherits", "hostname": "192.0.2.10"},
+            {"name": "own", "hostname": "192.0.2.11", "user": "admin", "port": 22, "ssh_key": "~/.ssh/own-ed25519"},
+            {"name": "held", "hostname": "192.0.2.12", "groups": ["no_auto_update"], "reasons": {"no_auto_update": "secrets"}},
+            {"name": "hidden", "hostname": "192.0.2.13", "exclude": ["ansible"]},
+        ],
+    }))
+
+
+@pytest.mark.parametrize(
+    "needle, found",
+    [
+        ("2222", {"inherits", "held", "hidden"}),
+        ("deploy", {"inherits", "held", "hidden"}),
+        ("lab-ed25519", {"inherits", "held", "hidden"}),
+        ("admin", {"own"}),
+        ("own-ed25519", {"own"}),
+        ("SECRETS", {"held"}),
+        ("ansible", {"hidden"}),
+    ],
+)
+def test_search_matches_effective_values_reasons_and_exclude(home, needle, found):
+    search_inventory(home)
+    rows = core.list_hosts(load_config(), search=needle)
+    assert {host.name for _, host in rows} == found
+
+
+def test_search_finds_the_port_ls_shows(home, capsys):
+    search_inventory(home)
+    assert run("ls", "--search", "2222") == 0
+    rows = {cells[0]: cells for line in capsys.readouterr().out.splitlines() if (cells := line.split())}
+    assert rows["inherits"][3] == "2222" and "own" not in rows
+
+
+def test_a_parked_module_does_not_block_export(both, capsys):
+    """work parks the ansible module, which is installed."""
     assert run("export") == 0
     out = capsys.readouterr().out
     assert "10-personal.conf (personal, ssh, 0 hosts)" in out and "20-work.conf (work, ssh, 0 hosts)" in out
+
+
+def test_a_missing_plugin_blocks_nothing_and_keeps_its_data(home, capsys):
+    """A parked table and host data for a module that isn't installed at all."""
+    assert "netbox" not in registry().modules and "netbox" not in registry().failures
+    write_config(home, PERSONAL_ONLY + '\n[inventories.personal.netbox]\nurl = "https://netbox.example"\nenabled = false\n')
+    inventory = home / "config" / "ari" / "personal.json"
+    inventory.write_text(json.dumps({
+        "version": 2,
+        "hosts": [{"name": "vps", "hostname": "198.51.100.1", "modules": {"netbox": {"id": 42}}}],
+    }))
+    assert run("export") == 0
+    assert "10-personal.conf (personal, ssh, 1 host)" in capsys.readouterr().out
+    assert "Host vps" in (home / "ssh" / "10-personal.conf").read_text()
+    assert run("show", "vps") == 0
+    assert "(module not installed)" in capsys.readouterr().out
+    assert run("edit", "vps", "--notes", "edge") == 0
+    assert json.loads(inventory.read_text())["hosts"][0]["modules"] == {"netbox": {"id": 42}}
+    assert run("modules") == 0
+    assert "netbox" not in capsys.readouterr().out
+
+
+def test_export_calls_no_module_once_validation_fails(personal, monkeypatch, capsys):
+    run("import", "ssh", str(FIXTURES / "personal.conf"))
+    path = personal / "config" / "ari" / "personal.json"
+    data = json.loads(path.read_text())
+    data["hosts"][0]["groups"] = ["typo"]
+    path.write_text(json.dumps(data))
+
+    def export(*args):
+        raise AssertionError("module.export called after validation failed")
+
+    monkeypatch.setattr(SshModule, "export", export)
+    assert run("export") == 1
+    assert "group 'typo' isn't declared" in capsys.readouterr().err
+    assert not (personal / "ssh" / "10-personal.conf").exists()
 
 
 def test_exclude_keeps_a_host_out_of_that_module(personal, tmp_path):

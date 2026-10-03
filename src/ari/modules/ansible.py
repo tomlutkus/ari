@@ -24,6 +24,7 @@ from . import ImportResult, Module, Output
 GROUP_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 RESERVED_GROUPS = {"all", "ungrouped"}
 HEADER_WIDTH = 62  # a zone header, after the indent, as the files have it today
+MODE = 0o644  # inventory files are read by whoever runs the playbooks, not only by their owner
 
 # all.vars and host vars that map onto host fields
 _VARS = {"ansible_user": "user", "ansible_ssh_private_key_file": "ssh_key", "ansible_port": "port"}
@@ -435,12 +436,14 @@ class AnsibleModule(Module):
         return problems
 
     def export(self, inventory: Inventory, hosts: list[Host], settings: Settings) -> list[Output]:
+        """The hosts file and the routed group files, 0644 like the rest of the repository they live in."""
         parts = sections(inventory, hosts, settings)
         order = [h for _, members in parts for h in members]
-        outputs = [Output(settings.dir / settings.hosts, render_hosts(inventory, parts).encode("utf-8"), len(order))]
+        hosts_file = render_hosts(inventory, parts).encode("utf-8")
+        outputs = [Output(settings.dir / settings.hosts, hosts_file, len(order), MODE)]
         for file, names in routing(inventory, settings).items():
             count = len({h.name for h in order if any(g in h.groups for g in names)})
-            outputs.append(Output(settings.dir / file, render_groups(inventory, names, order).encode("utf-8"), count))
+            outputs.append(Output(settings.dir / file, render_groups(inventory, names, order).encode("utf-8"), count, MODE))
         return outputs
 
     def read(self, source: str | None) -> ImportResult:

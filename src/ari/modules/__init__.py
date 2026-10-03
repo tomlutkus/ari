@@ -21,9 +21,13 @@ RESERVED = {"file"}  # keys an inventory table already uses
 
 @dataclass(frozen=True)
 class Output:
+    """One file a module wants written. The mode travels with the bytes: the module knows who
+    should read each file it writes, and 0600 keeps a module that never says so private."""
+
     path: Path
     data: bytes
     hosts: int
+    mode: int = 0o600
 
 
 @dataclass

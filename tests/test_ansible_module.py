@@ -1,5 +1,6 @@
 import json
 import shutil
+import stat
 import subprocess
 
 import pytest
@@ -11,6 +12,7 @@ from ari.errors import HostsError
 from ari.models import Defaults, GroupDef, Host, Inventory
 from ari.modules import registry
 from ari.modules.ansible import AnsibleModule, Settings, render_groups, render_hosts, scalar, sections
+from ari.modules.ssh import SshModule
 
 WORK = """
 default = "work"
@@ -298,6 +300,56 @@ def test_export_refuses_an_unzoned_host_and_writes_nothing(work, capsys):
     assert "work/ansible: loose is in no zone" in capsys.readouterr().err
     assert {n: (work / "ssh" / "ansible" / n).read_bytes() for n in FILES} == before
     assert not (work / "ssh" / "20-work.conf").exists()
+
+
+def test_a_failing_module_check_stops_every_module_before_it_renders(work, monkeypatch, capsys):
+    def export(*args):
+        raise AssertionError("module.export called after validation failed")
+
+    monkeypatch.setattr(AnsibleModule, "export", export)
+    monkeypatch.setattr(SshModule, "export", export)
+    assert run("add", "loose", "192.0.2.99") == 0
+    assert run("export") == 1
+    assert "work/ansible: loose is in no zone" in capsys.readouterr().err
+
+
+def modes(home):
+    paths = [home / "ssh" / "ansible" / n for n in FILES] + [home / "ssh" / "20-work.conf", work_json(home)]
+    return {p.name: stat.S_IMODE(p.stat().st_mode) for p in paths}
+
+
+def test_ansible_files_are_0644_ssh_config_and_inventory_0600(work):
+    assert run("export") == 0
+    assert modes(work) == {**dict.fromkeys(FILES, 0o644), "20-work.conf": 0o600, "work.json": 0o600}
+
+
+def test_export_fixes_the_mode_of_files_it_leaves_unchanged(work, capsys):
+    run("export")
+    directory = work / "ssh" / "ansible"
+    before = {n: (directory / n).read_bytes() for n in FILES}
+    for name in FILES:
+        (directory / name).chmod(0o600)
+    (work / "ssh" / "20-work.conf").chmod(0o644)
+    capsys.readouterr()
+    assert run("export") == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 6 and all(line.startswith("unchanged ") for line in lines)
+    assert sum(line.endswith("; mode set to 0644") for line in lines) == 5
+    assert sum(line.endswith("; mode set to 0600") for line in lines) == 1
+    assert modes(work) == {**dict.fromkeys(FILES, 0o644), "20-work.conf": 0o600, "work.json": 0o600}
+    assert {n: (directory / n).read_bytes() for n in FILES} == before
+    assert run("export") == 0
+    assert "mode set" not in capsys.readouterr().out
+
+
+def test_a_refused_export_leaves_modes_alone(work, capsys):
+    run("export")
+    directory = work / "ssh" / "ansible"
+    (directory / "00-hosts.yml").chmod(0o600)
+    (directory / "10-zones.yml").write_text((directory / "10-zones.yml").read_text() + "# hand edit\n")
+    assert run("export") == 1
+    assert "edited since the last export" in capsys.readouterr().err
+    assert stat.S_IMODE((directory / "00-hosts.yml").stat().st_mode) == 0o600
 
 
 def test_new_host_lands_in_its_zone_and_groups(work):

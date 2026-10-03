@@ -15,7 +15,7 @@
 . ftr VB CB
 . ftr VBI CBI
 .\}
-.TH "ARI" "1" "October 2026" "ari 0.4.0" "User Commands"
+.TH "ARI" "1" "October 2026" "ari 0.4.1" "User Commands"
 .hy
 .SH NAME
 .PP
@@ -138,7 +138,9 @@ T{
 \f[B]--search\f[R] \f[I]TEXT\f[R]
 T}@T{
 Only hosts with \f[I]TEXT\f[R] in any
-field, case-insensitive
+field, case-insensitive.
+User, port and key match their effective
+values, defaults included
 T}
 T{
 \f[B]--group\f[R] \f[I]GROUP\f[R]
@@ -150,6 +152,8 @@ T}
 .PP
 Show one host, found by name or alias in
 any inventory, with every field.
+\f[B]-i\f[R] narrows the search to one
+inventory.
 Values inherited from inventory defaults
 are marked \f[B](default)\f[R], and a
 group\[aq]s reason shows in parentheses
@@ -418,6 +422,9 @@ modules, or one inventory with
 \f[B]-i\f[R].
 Validation and the guard check run
 first; if any fails, nothing is written.
+A file whose contents are already right
+is left alone, apart from its mode if
+that differs.
 .PP
 .TS
 tab(@);
@@ -471,11 +478,14 @@ T}
 to one inventory: \f[B]-i\f[R], then
 \f[B]ARI_INVENTORY\f[R], then
 \f[B]default\f[R] from config.toml.
-\f[B]ls\f[R] and \f[B]export\f[R] cover
-every inventory unless \f[B]-i\f[R]
-narrows them, and \f[B]edit\f[R] and
-\f[B]rm\f[R] find the host wherever it
-is.
+\f[B]ls\f[R], \f[B]show\f[R] and
+\f[B]export\f[R] cover every inventory
+unless \f[B]-i\f[R] narrows them, and
+\f[B]edit\f[R] and \f[B]rm\f[R] find the
+host wherever it is.
+An inventory \f[B]-i\f[R] names that
+config.toml doesn\[aq]t declare is an
+error.
 .SH CONFIGURATION
 .PP
 \f[B]config.toml\f[R] declares the
@@ -789,6 +799,8 @@ over it.
 \f[V]Include config.d/*.conf\f[R] never
 matches the \f[V].tmp\f[R], so ssh never
 reads a half-written file.
+The file gets mode 0600, as do the
+inventories.
 .SH GENERATED ANSIBLE INVENTORY
 .PP
 The hosts file gets \f[B]all.vars\f[R]
@@ -834,6 +846,10 @@ files shows only real changes.
 Files in the directory that the
 \f[B]groups\f[R] table doesn\[aq]t name
 are never touched.
+.PP
+The files get mode 0644, so anyone who
+runs playbooks from the repository can
+read them.
 .SH FILES
 .PP
 .TS
