@@ -7,6 +7,7 @@
 ![Python 3.14](https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white)
 ![Packaged with uv](https://img.shields.io/badge/packaged%20with-uv-261230)
 ![Status: early](https://img.shields.io/badge/status-early-F2B705)
+![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)
 
 [Install](#install) · [Quick start](#quick-start) · [Manual](docs/ari.1.md) · [The name](#the-name)
 
@@ -145,3 +146,6 @@ $ uv run pytest
 ```
 
 Tests run on sanitized fixtures only: documentation addresses from RFC 5737 and invented names. Real inventories never belong in this repo.
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).

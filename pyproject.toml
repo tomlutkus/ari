@@ -4,6 +4,8 @@ version = "0.2.0"
 description = "One record per SSH host; generates ssh config and Ansible inventory"
 readme = "README.md"
 authors = [{ name = "Thomas Lutkus", email = "thomas@lutkus.net" }]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
     "pyyaml>=6.0.3",
