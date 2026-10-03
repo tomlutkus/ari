@@ -18,21 +18,29 @@ Hosts end up living in three places: `~/.ssh/config`, an Ansible inventory, and 
 ## In use
 
 ```console
-$ ari ls
- NAME         HOSTNAME         USER    PORT   GROUPS   INV
- ──────────────────────────────────────────────────────────────
- github.com   github.com       git       22   -        personal
- laptop       192.0.2.11       tom       22   -        personal
- nas          192.0.2.254      root      22   -        personal
- vps          198.51.100.187   tom       22   -        personal
- firewall     203.0.113.1      admin   2222   -        work
- oldbox       203.0.113.134    admin     22   -        work
+$ ari -i work add web-02 203.0.113.11 --notes "front end" --group zone_app --group monitoring_web
+added web-02 to work
 
-6 hosts
+$ ari ls
+ NAME         HOSTNAME         USER     PORT   GROUPS                     INV
+ ─────────────────────────────────────────────────────────────────────────────────
+ github.com   github.com       git        22   -                          personal
+ laptop       192.0.2.11       tom        22   -                          personal
+ nas          192.0.2.254      root       22   -                          personal
+ vps          198.51.100.187   tom        22   -                          personal
+ firewall     203.0.113.1      admin    2222   -                          work
+ gw           203.0.113.129    admin    2222   zone_edge                  work
+ web-01       203.0.113.10     deploy     22   zone_app, monitoring_web   work
+ web-02       203.0.113.11     deploy     22   zone_app, monitoring_web   work
+
+8 hosts
 
 $ ari export
 wrote ~/.ssh/config.d/10-personal.conf (personal, ssh, 4 hosts)
-wrote ~/.ssh/config.d/20-work.conf (work, ssh, 2 hosts)
+wrote ~/.ssh/config.d/20-work.conf (work, ssh, 4 hosts)
+wrote ~/infra/ansible/inventory/00-hosts.yml (work, ansible, 3 hosts)
+wrote ~/infra/ansible/inventory/10-zones.yml (work, ansible, 3 hosts)
+wrote ~/infra/ansible/inventory/60-monitoring.yml (work, ansible, 2 hosts)
 ```
 
 Each inventory gets its own file, so work and personal hosts never mix:
@@ -47,9 +55,36 @@ Host nas storage 192.0.2.254
     IdentitiesOnly yes
 ```
 
+Inventories with an `ansible` table also get an Ansible inventory: a hosts file sectioned by zone, plus group files routed by glob. `firewall` stays ssh only, since it excludes the ansible module:
+
+```yaml
+all:
+  vars:
+    ansible_user: deploy
+    ansible_ssh_private_key_file: ~/.ssh/work-ed25519
+  hosts:
+
+    # ── app subnet (203.0.113.0/26) ─────────────────────────────
+    web-01:
+      ansible_host: 203.0.113.10
+      description: front end
+    web-02:
+      ansible_host: 203.0.113.11
+      description: front end
+
+    # ── edge (203.0.113.128/26) ─────────────────────────────────
+    gw:
+      ansible_host: 203.0.113.129
+      description: edge router
+      ansible_user: admin
+      ansible_port: 2222
+```
+
 ## How it stays safe
 
-ssh resolves every generated file in one namespace where the first match wins, so a duplicate name would silently shadow a host. ari refuses to export until every name and alias is unique across all inventories.
+ssh resolves every generated file in one namespace where the first match wins, so a duplicate name would silently shadow a host. ari refuses any name or alias already used in another inventory, on every add, edit and import.
+
+Group membership lives on the host record. Removing a host removes it from every group, no group can list a host that doesn't exist, and a group has to be declared before a host can join it, so a typo fails instead of creating one. Before writing Ansible, ari checks that every host sits in exactly one zone and every group goes to exactly one file. Any failure writes nothing and lists every problem at once.
 
 Generated files are output. ari records a hash of everything it writes and won't overwrite a file that was edited by hand since, unless you pass `--force` after looking at it. Writes go to a temp file and get renamed into place, and `Include config.d/*.conf` never matches the temp name, so ssh never reads half a file.
 
@@ -57,12 +92,12 @@ Every host is written out in full, with no `Host *` blocks. Those ignore file bo
 
 ## Modules
 
-Every format is a module: one table per module in each inventory's config, and `enabled = false` parks one without losing its settings. The built-in `ssh` module imports and writes OpenSSH client config. Modules hand ari paths and contents and never touch the disk themselves, so the guard and the atomic writes cover all of them.
+Every format is a module: one table per module in each inventory's config, and `enabled = false` parks one without losing its settings. Two are built in. `ssh` imports and writes OpenSSH client config. `ansible` imports and writes an Ansible YAML inventory with its own small emitter, so zone headers and reason comments survive and the same data always gives the same bytes. Modules hand ari paths and contents and never touch the disk themselves, so the guard and the atomic writes cover all of them.
 
-Modules are found through the `ari.modules` entry point group, the built-in one included. A third-party module is a package that registers there:
+Modules are found through the `ari.modules` entry point group, the built-in ones included. A third-party module is a package that registers there:
 
 ```console
-$ uv tool install ari --with ari-netbox
+$ uv tool install ari --with PACKAGE
 $ ari modules
 ```
 
@@ -74,9 +109,9 @@ $ ari modules
 - [x] `ls` and `show`
 - [x] `add`, `edit` and `rm`
 - [x] Formats as modules you switch on per inventory
-- [x] Ansible inventory export
+- [x] Ansible inventory import and export, byte for byte stable
+- [x] `make install`, `make man` and `make check`
 - [ ] TUI, with a key that drops you straight into ssh
-- [ ] NetBox import
 
 ## Install
 
@@ -86,13 +121,12 @@ ari needs [uv](https://docs.astral.sh/uv/), which fetches Python 3.14 on its own
 $ uv tool install --python 3.14 git+https://github.com/tomlutkus/ari
 ```
 
-That puts `ari` in `~/.local/bin`. For the man page as well, install from a checkout:
+That puts `ari` in `~/.local/bin`. For the man page as well, install from a checkout. `make install` installs it editable, so `ari` follows whatever is checked out, and links the man page into `~/.local/share/man/man1`:
 
 ```console
 $ git clone https://github.com/tomlutkus/ari ~/src/ari
-$ uv tool install --editable --python 3.14 ~/src/ari
-$ mkdir -p ~/.local/share/man/man1
-$ ln -sf ~/src/ari/man/ari.1 ~/.local/share/man/man1/ari.1
+$ cd ~/src/ari
+$ make install
 ```
 
 ## Quick start
@@ -120,6 +154,8 @@ $ ln -sf ~/src/ari/man/ari.1 ~/.local/share/man/man1/ari.1
    ```
 
 To prove nothing changed, compare `ssh -G <host>` before and after.
+
+An Ansible inventory comes in the same way. `ari import ansible DIR` reads the directory and prints the `ansible` table to add to `config.toml`. Comments don't survive pyyaml, so import lists each one with its file and line for you to put back by hand, and `ansible-inventory --list` before and after proves Ansible sees the same inventory.
 
 ## Files
 
@@ -153,10 +189,13 @@ Out of the strong came forth sweetness.
 
 ```console
 $ uv sync
-$ uv run pytest
+$ make check
 ```
 
+`make check` runs the tests, then fails if `man/ari.1` no longer matches `docs/ari.1.md`. `make man` regenerates it with pandoc. The ssh and Ansible tests compare `ssh -G` and `ansible-inventory --list` output when those tools are installed, and skip otherwise.
+
 Tests run on sanitized fixtures only: documentation addresses from RFC 5737 and invented names. Real inventories never belong in this repo.
+
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).

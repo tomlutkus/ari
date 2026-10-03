@@ -8,7 +8,7 @@ date: October 2026
 
 # NAME
 
-ari - keep SSH hosts in one place and generate ssh config from them
+ari - keep SSH hosts in one place and generate ssh config and Ansible inventory from them
 
 # SYNOPSIS
 
@@ -18,6 +18,12 @@ ari - keep SSH hosts in one place and generate ssh config from them
 
 **ari show** *NAME*
 
+**ari add** *NAME* *HOSTNAME* [*OPTIONS*]
+
+**ari edit** *NAME* [*OPTIONS*]
+
+**ari rm** *NAME*
+
 **ari modules**
 
 **ari import** *MODULE* [*SOURCE*] [**--exclude** *MODULE*]
@@ -26,7 +32,9 @@ ari - keep SSH hosts in one place and generate ssh config from them
 
 # DESCRIPTION
 
-**ari** keeps one record per SSH host in JSON inventories and generates files from them through modules. Each inventory, such as *personal* or *work*, is declared in **config.toml** with the modules it uses. The built-in **ssh** module imports and writes OpenSSH client config.
+**ari** keeps one record per SSH host in JSON inventories and generates files from them through modules. Each inventory, such as *personal* or *work*, is declared in **config.toml** with the modules it uses. The built-in **ssh** module imports and writes OpenSSH client config; the built-in **ansible** module imports and writes an Ansible YAML inventory.
+
+Group membership lives on the host record, so removing a host removes it from every group, and no group can name a host that doesn't exist.
 
 Names and aliases are unique across all inventories, compared case-insensitively the way ssh compares them. Every generated file lands in one ssh namespace where the first match wins, so a duplicate would silently shadow a host.
 
@@ -61,7 +69,39 @@ List hosts across every inventory, or only the one named with **-i**. User and p
 
 ## show *NAME*
 
-Show one host, found by name or alias in any inventory, with every field. Values inherited from inventory defaults are marked **(default)**.
+Show one host, found by name or alias in any inventory, with every field. Values inherited from inventory defaults are marked **(default)**, and a group's reason shows in parentheses after it.
+
+## add *NAME* *HOSTNAME*
+
+Add a host to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. A value equal to the inventory default isn't stored, so the host follows the default if it changes.
+
+| Option | Meaning |
+|-------|-------------|
+| **--user** *USER* | Login name |
+| **--port** *PORT* | ssh port, 1-65535 |
+| **--key** *PATH* | Private key, written as IdentityFile |
+| **--notes** *TEXT* | Free text: a comment above the Host block, and the Ansible description |
+| **--alias** *ALIAS* | Another name on the Host line; repeatable |
+| **--opt** *KEY*=*VALUE* | Another ssh option; repeatable |
+| **--group** *GROUP*[:*REASON*] | Join a declared group, with an optional reason key; repeatable |
+| **--exclude** *MODULE* | Keep the host out of *MODULE*'s output; repeatable |
+
+## edit *NAME*
+
+Change a host, found by name or alias. **-i** narrows the search to one inventory. Takes every **add** option, plus these:
+
+| Option | Meaning |
+|-------|-------------|
+| **--hostname** *HOSTNAME* | New address |
+| **--rename** *NAME* | New name |
+| **--ungroup** *GROUP* | Leave a group, and its reason with it; repeatable |
+| **--include** *MODULE* | Undo an **--exclude**; repeatable |
+
+An empty value clears a field: **--user ''**, **--port ''** and **--key ''** go back to the inventory default, **--notes ''** empties the notes, and **--opt** *KEY*= removes that option. **--group** sets membership exactly as given, so naming a group the host is already in without a reason drops its reason. **--ungroup** a group the host isn't in, **--include** a module it doesn't exclude, and clearing an option it doesn't have are errors, not silent no-ops. An edit that changes nothing saves nothing.
+
+## rm *NAME*
+
+Remove a host, found by name or alias, from whichever inventory holds it. **-i** narrows the search. Its group memberships go with it.
 
 ## modules
 
@@ -69,17 +109,17 @@ List the installed modules, whether each can import and export, and which invent
 
 ## import *MODULE* [*SOURCE*]
 
-Read hosts into one inventory through *MODULE*. A host already in the inventory is merged: new aliases and module data are added. A different HostName, User, Port or IdentityFile is reported as a conflict and left alone. A host whose name or alias already belongs to another inventory is refused.
+Read hosts into one inventory through *MODULE*. A host already in the inventory is merged: new aliases, groups, module data and missing notes are added. A different HostName, User, Port or IdentityFile is reported as a conflict and left alone. A host whose name or alias already belongs to another inventory is refused.
 
-Importing into an empty inventory sets its default user and key to the values most hosts share, and each host stores only what differs. A host the source gives no user or key inherits the defaults, with a warning naming them. Import records the hash of every file it reads, so exporting over that same file afterwards passes the guard.
+Importing into an empty inventory sets its defaults: from the source's own defaults when it has them, like Ansible's **all.vars**, otherwise to the user and key most hosts share. Each host stores only what differs. Import records the hash of every file it reads, so exporting over those same files afterwards passes the guard.
 
 | Option | Meaning |
 |-------|-------------|
 | **--exclude** *MODULE* | Keep the imported hosts out of *MODULE*'s output; repeatable |
 
-With the **ssh** module, *SOURCE* is a config file. It reads the Host blocks in that file. The first token on a Host line becomes the name and the rest become aliases. **HostName**, **User**, **Port** and **IdentityFile** become fields, **IdentitiesOnly yes** is implied by a key, and every other keyword is kept as an ssh option, in order.
+With the **ssh** module, *SOURCE* is a config file. The first token on a Host line becomes the name and the rest become aliases. **HostName**, **User**, **Port** and **IdentityFile** become fields, **IdentitiesOnly yes** is implied by a key, and every other keyword is kept as an ssh option, in order. Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, the first value is kept, as ssh does. A block without **User** stays without one, so ssh uses whoever connects.
 
-Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, the first value is kept, as ssh does. A block without **User** stays without one, so ssh uses whoever connects; a block without **Port** is stored as 22, ssh's own default.
+With the **ansible** module, *SOURCE* is an inventory directory, and every **.yml** and **.yaml** file at its top level is read. **all.vars** become the defaults, each host's **ansible_host**, **ansible_user**, **ansible_port**, **ansible_ssh_private_key_file** and **description** become its fields, and group membership, child groups and the file each group came from carry over. Anything else is reported as not imported: other vars, group vars, and members that no hosts section defines. Comments are read by nothing and listed with their file and line, so zone headers and reasons can be filled in by hand. When the inventory has no **ansible** table yet, import prints one to paste into config.toml, with each file's groups listed by name.
 
 ## export [*MODULE* ...]
 
@@ -97,7 +137,7 @@ Write the output of every enabled module of every inventory, or only the named m
 | **-h**, **--help** | Show help for **ari** or for one command |
 | **--version** | Show the version |
 
-**import** writes to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. **ls** and **export** cover every inventory unless **-i** narrows them.
+**add** and **import** write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. **ls** and **export** cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is.
 
 # CONFIGURATION
 
@@ -114,16 +154,28 @@ file = "~/work/infra/ari/work.json"
 
 [inventories.work.ssh]
 path = "~/.ssh/config.d/20-work.conf"
-enabled = false
+
+[inventories.work.ansible]
+dir = "~/work/infra/ansible/inventory"
+zones = "zone_*"
+
+[inventories.work.ansible.groups]
+"10-zones.yml" = ["zone_*"]
+"40-roles.yml" = ["role_*", "do_not_touch"]
+"70-lifecycle.yml" = ["lifecycle_*", "no_auto_update"]
 ```
 
 | Key | Meaning |
-|-------|-------------|
-| **default** | Inventory used by **import** when **-i** and **ARI_INVENTORY** are unset |
+|-------------|------------|
+| **default** | Inventory used by **add** and **import** when **-i** and **ARI_INVENTORY** are unset |
 | `inventories.NAME.file` | Inventory data; defaults to `NAME.json` beside config.toml |
 | `inventories.NAME.MODULE` | A module this inventory uses, with that module's settings |
 | `inventories.NAME.MODULE.enabled` | **false** parks the module without losing its settings |
 | `inventories.NAME.ssh.path` | Generated ssh config; absolute or starting with **~** |
+| `inventories.NAME.ansible.dir` | Ansible inventory directory; absolute or starting with **~** |
+| `inventories.NAME.ansible.hosts` | Hosts file in that directory; defaults to `00-hosts.yml` |
+| `inventories.NAME.ansible.zones` | Glob, or list of globs, naming the zone groups |
+| `inventories.NAME.ansible.groups` | Each group file, with the globs of the groups it holds |
 
 A table for a module that isn't installed is an error, unless it says **enabled = false**.
 
@@ -135,9 +187,9 @@ Include config.d/*.conf
 
 # MODULES
 
-A module turns an inventory into files, reads a source into hosts, or both. Modules never write to disk themselves: they hand **ari** paths and contents, and **ari** does the writing, so the guard, the atomic writes and the all-or-nothing validation cover every module the same way.
+A module turns an inventory into files, reads a source into hosts, or both. Modules never write to disk themselves: they hand **ari** paths and contents, and **ari** does the writing, so the guard, the atomic writes and the all-or-nothing validation cover every module the same way. A host that lists a module in **exclude** never reaches it.
 
-Modules are found through the Python entry point group **ari.modules**. The built-in **ssh** module registers there like any other. A third-party module is a package that registers in that group; install it into ari's environment with **uv tool install ari --with** *PACKAGE*.
+Modules are found through the Python entry point group **ari.modules**. The built-in **ssh** and **ansible** modules register there like any other. A third-party module is a package that registers in that group; install it into ari's environment with **uv tool install ari --with** *PACKAGE*.
 
 # INVENTORY FILES
 
@@ -147,15 +199,20 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 {
   "version": 2,
   "last_updated": "2026-10-02T21:14:00+01:00",
-  "defaults": {"user": "tom", "ssh_key": "~/.ssh/id-ed25519"},
-  "groups": {},
+  "defaults": {"user": "deploy", "ssh_key": "~/.ssh/lab-ed25519"},
+  "groups": {
+    "zone_app": {"description": "app subnet (192.0.2.0/25)"},
+    "role_node": {"children": ["role_cluster", "role_standalone"]},
+    "no_auto_update": {"reasons": {"secrets": "secrets and prod path"}}
+  },
   "hosts": [
     {
-      "name": "nas",
-      "hostname": "192.0.2.254",
-      "aliases": ["storage"],
-      "user": "root",
-      "modules": {"ssh": {"options": {"RequestTTY": "yes"}}},
+      "name": "vault-01",
+      "hostname": "192.0.2.30",
+      "aliases": ["vault"],
+      "notes": "secrets store",
+      "groups": ["zone_app", "no_auto_update"],
+      "reasons": {"no_auto_update": "secrets"},
       "last_updated": "2026-10-02T21:14:00+01:00"
     }
   ]
@@ -164,25 +221,42 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 
 | Field | Meaning |
 |-------|-------------|
-| **name** | ssh alias; required |
-| **hostname** | Address ssh connects to; required |
+| **name** | ssh alias and Ansible inventory hostname; required |
+| **hostname** | Address ssh and Ansible connect to; required |
 | **aliases** | More names on the Host line |
 | **user**, **port**, **ssh_key** | Override the inventory defaults |
-| **notes** | Written as a comment above the Host block |
-| **groups**, **reasons** | Group membership, and why; for modules that use groups |
+| **notes** | A comment above the Host block, and the Ansible description |
+| **groups** | Groups the host is in, each declared under **groups** |
+| **reasons** | Why the host is in a group: a reason key that group declares |
 | **exclude** | Modules whose output leaves this host out |
 | **modules** | Each module's own data, under its name |
 | `modules.ssh.options` | Any other ssh_config keywords, written in order |
 
+Every group a host uses is declared under **groups**, even as an empty `{}`, so a typo fails instead of creating a group. No command declares groups yet; edit the file. A declaration takes three optional keys: **description**, whose first line is a zone's section header in the hosts file and whose further lines become comments under it; **children**, the group's child groups; and **reasons**, an ordered map of reason key to text.
+
 Data for a module that isn't installed is kept as it is, so removing a plugin never loses anything. A version 1 file, from ari 0.2, is upgraded when it's read and saved as version 2 on its next write.
 
 A file that fails to parse stops **ari** with the path and the error. It is never treated as empty.
+
+# VALIDATION
+
+**add** and **edit** check the host they write and save nothing if any check fails, listing every problem at once: the name and aliases are valid ssh host names and unique across all inventories, the hostname has no spaces, the port is 1-65535, every group is declared, every reason is one its group declares, and each installed module accepts the host's data. ssh options can't repeat a keyword the host has a field for, like **User** or **Port**.
+
+**export** checks every inventory it covers before writing anything. Beyond names, groups and reasons, every child group must be declared and children may not form a cycle. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table, and, when **zones** is set, every host it exports is in exactly one zone.
 
 # GENERATED SSH CONFIG
 
 Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, and **IdentityFile** with **IdentitiesOnly yes** when a key is set, followed by the host's other options. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
 
 Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file.
+
+# GENERATED ANSIBLE INVENTORY
+
+The hosts file gets **all.vars** from the defaults, in the order **ansible_user**, **ansible_ssh_private_key_file**, **ansible_port**. With **zones** set, hosts come in sections, one per zone in the order the zones are declared, each opened by a blank line and a header comment padded to 62 characters. A zone without a description uses its group name. Within a section hosts sort by IP address, with names that aren't addresses after them. Each host gets **ansible_host**, **description** from its notes, and **ansible_user**, **ansible_port** or **ansible_ssh_private_key_file** only where it differs from the defaults.
+
+Each file in the **groups** table holds the groups its globs match, in declaration order, under `all: children:`, one blank line before each group. A group lists its children first, then its hosts in the hosts file's order. Hosts without a reason come first; then each reason, in the order its group declares them, writes its text as a comment followed by its hosts.
+
+Values are written plain when YAML reads them back unchanged, and double-quoted otherwise. The same inventory always produces the same bytes, so a diff of the generated files shows only real changes. Files in the directory that the **groups** table doesn't name are never touched.
 
 # FILES
 
@@ -198,7 +272,7 @@ Every write goes to `FILE.tmp` beside the target and is then renamed over it. `I
 
 | Variable | Effect |
 |-------|-------------|
-| **ARI_INVENTORY** | Inventory for **import** when **-i** is not given |
+| **ARI_INVENTORY** | Inventory for **add** and **import** when **-i** is not given |
 | **XDG_CONFIG_HOME** | Where config.toml and inventories live |
 | **XDG_STATE_HOME** | Where the guard state lives |
 
@@ -215,10 +289,26 @@ ari import ssh ~/.ssh/config.d/10-personal.conf -i personal
 ari export
 ```
 
-Bring in hand-kept hosts that must never reach Ansible:
+Bring an Ansible inventory in, then the ssh-only hosts beside it:
 
 ```
+ari import ansible ~/work/infra/ansible/inventory -i work
 ari import ssh ~/.ssh/config.d/20-work.conf -i work --exclude ansible
+```
+
+Add a host to a zone and a monitoring group, then give it a reason to stay out of updates:
+
+```
+ari -i work add vault-03 192.0.2.32 --group zone_app --group monitoring_db
+ari edit vault-03 --group no_auto_update:secrets
+ari export
+```
+
+Move a host to a new address, and retire another:
+
+```
+ari edit vault-03 --hostname 192.0.2.33
+ari rm oldbox
 ```
 
 Find every host on a subnet:
@@ -235,4 +325,4 @@ ari export --force
 
 # SEE ALSO
 
-**ssh**(1), **ssh_config**(5)
+**ssh**(1), **ssh_config**(5), **ansible-inventory**(1)

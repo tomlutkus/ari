@@ -20,7 +20,8 @@
 .SH NAME
 .PP
 ari - keep SSH hosts in one place and
-generate ssh config from them
+generate ssh config and Ansible
+inventory from them
 .SH SYNOPSIS
 .PP
 \f[B]ari\f[R] [\f[B]-i\f[R]
@@ -32,6 +33,14 @@ generate ssh config from them
 \f[I]GROUP\f[R]]
 .PP
 \f[B]ari show\f[R] \f[I]NAME\f[R]
+.PP
+\f[B]ari add\f[R] \f[I]NAME\f[R]
+\f[I]HOSTNAME\f[R] [\f[I]OPTIONS\f[R]]
+.PP
+\f[B]ari edit\f[R] \f[I]NAME\f[R]
+[\f[I]OPTIONS\f[R]]
+.PP
+\f[B]ari rm\f[R] \f[I]NAME\f[R]
 .PP
 \f[B]ari modules\f[R]
 .PP
@@ -53,7 +62,14 @@ declared in \f[B]config.toml\f[R] with
 the modules it uses.
 The built-in \f[B]ssh\f[R] module
 imports and writes OpenSSH client
-config.
+config; the built-in \f[B]ansible\f[R]
+module imports and writes an Ansible
+YAML inventory.
+.PP
+Group membership lives on the host
+record, so removing a host removes it
+from every group, and no group can name
+a host that doesn\[aq]t exist.
 .PP
 Names and aliases are unique across all
 inventories, compared case-insensitively
@@ -135,7 +151,140 @@ T}
 Show one host, found by name or alias in
 any inventory, with every field.
 Values inherited from inventory defaults
-are marked \f[B](default)\f[R].
+are marked \f[B](default)\f[R], and a
+group\[aq]s reason shows in parentheses
+after it.
+.SS add \f[I]NAME\f[R] \f[I]HOSTNAME\f[R]
+.PP
+Add a host to one inventory:
+\f[B]-i\f[R], then
+\f[B]ARI_INVENTORY\f[R], then
+\f[B]default\f[R] from config.toml.
+A value equal to the inventory default
+isn\[aq]t stored, so the host follows
+the default if it changes.
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+Option
+T}@T{
+Meaning
+T}
+_
+T{
+\f[B]--user\f[R] \f[I]USER\f[R]
+T}@T{
+Login name
+T}
+T{
+\f[B]--port\f[R] \f[I]PORT\f[R]
+T}@T{
+ssh port, 1-65535
+T}
+T{
+\f[B]--key\f[R] \f[I]PATH\f[R]
+T}@T{
+Private key, written as IdentityFile
+T}
+T{
+\f[B]--notes\f[R] \f[I]TEXT\f[R]
+T}@T{
+Free text: a comment above the Host
+block, and the Ansible description
+T}
+T{
+\f[B]--alias\f[R] \f[I]ALIAS\f[R]
+T}@T{
+Another name on the Host line;
+repeatable
+T}
+T{
+\f[B]--opt\f[R]
+\f[I]KEY\f[R]=\f[I]VALUE\f[R]
+T}@T{
+Another ssh option; repeatable
+T}
+T{
+\f[B]--group\f[R]
+\f[I]GROUP\f[R][:\f[I]REASON\f[R]]
+T}@T{
+Join a declared group, with an optional
+reason key; repeatable
+T}
+T{
+\f[B]--exclude\f[R] \f[I]MODULE\f[R]
+T}@T{
+Keep the host out of
+\f[I]MODULE\f[R]\[aq]s output;
+repeatable
+T}
+.TE
+.SS edit \f[I]NAME\f[R]
+.PP
+Change a host, found by name or alias.
+\f[B]-i\f[R] narrows the search to one
+inventory.
+Takes every \f[B]add\f[R] option, plus
+these:
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+Option
+T}@T{
+Meaning
+T}
+_
+T{
+\f[B]--hostname\f[R] \f[I]HOSTNAME\f[R]
+T}@T{
+New address
+T}
+T{
+\f[B]--rename\f[R] \f[I]NAME\f[R]
+T}@T{
+New name
+T}
+T{
+\f[B]--ungroup\f[R] \f[I]GROUP\f[R]
+T}@T{
+Leave a group, and its reason with it;
+repeatable
+T}
+T{
+\f[B]--include\f[R] \f[I]MODULE\f[R]
+T}@T{
+Undo an \f[B]--exclude\f[R]; repeatable
+T}
+.TE
+.PP
+An empty value clears a field:
+\f[B]--user \[aq]\[aq]\f[R], \f[B]--port
+\[aq]\[aq]\f[R] and \f[B]--key
+\[aq]\[aq]\f[R] go back to the inventory
+default, \f[B]--notes \[aq]\[aq]\f[R]
+empties the notes, and \f[B]--opt\f[R]
+\f[I]KEY\f[R]= removes that option.
+\f[B]--group\f[R] sets membership
+exactly as given, so naming a group the
+host is already in without a reason
+drops its reason.
+\f[B]--ungroup\f[R] a group the host
+isn\[aq]t in, \f[B]--include\f[R] a
+module it doesn\[aq]t exclude, and
+clearing an option it doesn\[aq]t have
+are errors, not silent no-ops.
+An edit that changes nothing saves
+nothing.
+.SS rm \f[I]NAME\f[R]
+.PP
+Remove a host, found by name or alias,
+from whichever inventory holds it.
+\f[B]-i\f[R] narrows the search.
+Its group memberships go with it.
 .SS modules
 .PP
 List the installed modules, whether each
@@ -148,8 +297,8 @@ with the reason.
 Read hosts into one inventory through
 \f[I]MODULE\f[R].
 A host already in the inventory is
-merged: new aliases and module data are
-added.
+merged: new aliases, groups, module data
+and missing notes are added.
 A different HostName, User, Port or
 IdentityFile is reported as a conflict
 and left alone.
@@ -157,15 +306,15 @@ A host whose name or alias already
 belongs to another inventory is refused.
 .PP
 Importing into an empty inventory sets
-its default user and key to the values
-most hosts share, and each host stores
-only what differs.
-A host the source gives no user or key
-inherits the defaults, with a warning
-naming them.
+its defaults: from the source\[aq]s own
+defaults when it has them, like
+Ansible\[aq]s \f[B]all.vars\f[R],
+otherwise to the user and key most hosts
+share.
+Each host stores only what differs.
 Import records the hash of every file it
-reads, so exporting over that same file
-afterwards passes the guard.
+reads, so exporting over those same
+files afterwards passes the guard.
 .PP
 .TS
 tab(@);
@@ -187,7 +336,6 @@ T}
 .PP
 With the \f[B]ssh\f[R] module,
 \f[I]SOURCE\f[R] is a config file.
-It reads the Host blocks in that file.
 The first token on a Host line becomes
 the name and the rest become aliases.
 \f[B]HostName\f[R], \f[B]User\f[R],
@@ -196,7 +344,6 @@ the name and the rest become aliases.
 \f[B]IdentitiesOnly yes\f[R] is implied
 by a key, and every other keyword is
 kept as an ssh option, in order.
-.PP
 Pattern Host blocks, Match blocks,
 Include lines and options outside any
 Host block are skipped with a warning.
@@ -204,8 +351,34 @@ When a keyword repeats inside a block,
 the first value is kept, as ssh does.
 A block without \f[B]User\f[R] stays
 without one, so ssh uses whoever
-connects; a block without \f[B]Port\f[R]
-is stored as 22, ssh\[aq]s own default.
+connects.
+.PP
+With the \f[B]ansible\f[R] module,
+\f[I]SOURCE\f[R] is an inventory
+directory, and every \f[B].yml\f[R] and
+\f[B].yaml\f[R] file at its top level is
+read.
+\f[B]all.vars\f[R] become the defaults,
+each host\[aq]s \f[B]ansible_host\f[R],
+\f[B]ansible_user\f[R],
+\f[B]ansible_port\f[R],
+\f[B]ansible_ssh_private_key_file\f[R]
+and \f[B]description\f[R] become its
+fields, and group membership, child
+groups and the file each group came from
+carry over.
+Anything else is reported as not
+imported: other vars, group vars, and
+members that no hosts section defines.
+Comments are read by nothing and listed
+with their file and line, so zone
+headers and reasons can be filled in by
+hand.
+When the inventory has no
+\f[B]ansible\f[R] table yet, import
+prints one to paste into config.toml,
+with each file\[aq]s groups listed by
+name.
 .SS export [\f[I]MODULE\f[R] ...]
 .PP
 Write the output of every enabled module
@@ -263,13 +436,15 @@ Show the version
 T}
 .TE
 .PP
-\f[B]import\f[R] writes to one
-inventory: \f[B]-i\f[R], then
+\f[B]add\f[R] and \f[B]import\f[R] write
+to one inventory: \f[B]-i\f[R], then
 \f[B]ARI_INVENTORY\f[R], then
 \f[B]default\f[R] from config.toml.
 \f[B]ls\f[R] and \f[B]export\f[R] cover
 every inventory unless \f[B]-i\f[R]
-narrows them.
+narrows them, and \f[B]edit\f[R] and
+\f[B]rm\f[R] find the host wherever it
+is.
 .SH CONFIGURATION
 .PP
 \f[B]config.toml\f[R] declares the
@@ -290,13 +465,21 @@ file = \[dq]\[ti]/work/infra/ari/work.json\[dq]
 
 [inventories.work.ssh]
 path = \[dq]\[ti]/.ssh/config.d/20-work.conf\[dq]
-enabled = false
+
+[inventories.work.ansible]
+dir = \[dq]\[ti]/work/infra/ansible/inventory\[dq]
+zones = \[dq]zone_*\[dq]
+
+[inventories.work.ansible.groups]
+\[dq]10-zones.yml\[dq] = [\[dq]zone_*\[dq]]
+\[dq]40-roles.yml\[dq] = [\[dq]role_*\[dq], \[dq]do_not_touch\[dq]]
+\[dq]70-lifecycle.yml\[dq] = [\[dq]lifecycle_*\[dq], \[dq]no_auto_update\[dq]]
 \f[R]
 .fi
 .PP
 .TS
 tab(@);
-lw(24.5n) lw(45.5n).
+lw(36.4n) lw(33.6n).
 T{
 Key
 T}@T{
@@ -306,9 +489,9 @@ _
 T{
 \f[B]default\f[R]
 T}@T{
-Inventory used by \f[B]import\f[R] when
-\f[B]-i\f[R] and \f[B]ARI_INVENTORY\f[R]
-are unset
+Inventory used by \f[B]add\f[R] and
+\f[B]import\f[R] when \f[B]-i\f[R] and
+\f[B]ARI_INVENTORY\f[R] are unset
 T}
 T{
 \f[V]inventories.NAME.file\f[R]
@@ -333,6 +516,30 @@ T{
 T}@T{
 Generated ssh config; absolute or
 starting with \f[B]\[ti]\f[R]
+T}
+T{
+\f[V]inventories.NAME.ansible.dir\f[R]
+T}@T{
+Ansible inventory directory; absolute or
+starting with \f[B]\[ti]\f[R]
+T}
+T{
+\f[V]inventories.NAME.ansible.hosts\f[R]
+T}@T{
+Hosts file in that directory; defaults
+to \f[V]00-hosts.yml\f[R]
+T}
+T{
+\f[V]inventories.NAME.ansible.zones\f[R]
+T}@T{
+Glob, or list of globs, naming the zone
+groups
+T}
+T{
+\f[V]inventories.NAME.ansible.groups\f[R]
+T}@T{
+Each group file, with the globs of the
+groups it holds
 T}
 .TE
 .PP
@@ -359,11 +566,14 @@ contents, and \f[B]ari\f[R] does the
 writing, so the guard, the atomic writes
 and the all-or-nothing validation cover
 every module the same way.
+A host that lists a module in
+\f[B]exclude\f[R] never reaches it.
 .PP
 Modules are found through the Python
 entry point group \f[B]ari.modules\f[R].
-The built-in \f[B]ssh\f[R] module
-registers there like any other.
+The built-in \f[B]ssh\f[R] and
+\f[B]ansible\f[R] modules register there
+like any other.
 A third-party module is a package that
 registers in that group; install it into
 ari\[aq]s environment with \f[B]uv tool
@@ -380,15 +590,20 @@ inventory \f[B]defaults\f[R].
 {
   \[dq]version\[dq]: 2,
   \[dq]last_updated\[dq]: \[dq]2026-10-02T21:14:00+01:00\[dq],
-  \[dq]defaults\[dq]: {\[dq]user\[dq]: \[dq]tom\[dq], \[dq]ssh_key\[dq]: \[dq]\[ti]/.ssh/id-ed25519\[dq]},
-  \[dq]groups\[dq]: {},
+  \[dq]defaults\[dq]: {\[dq]user\[dq]: \[dq]deploy\[dq], \[dq]ssh_key\[dq]: \[dq]\[ti]/.ssh/lab-ed25519\[dq]},
+  \[dq]groups\[dq]: {
+    \[dq]zone_app\[dq]: {\[dq]description\[dq]: \[dq]app subnet (192.0.2.0/25)\[dq]},
+    \[dq]role_node\[dq]: {\[dq]children\[dq]: [\[dq]role_cluster\[dq], \[dq]role_standalone\[dq]]},
+    \[dq]no_auto_update\[dq]: {\[dq]reasons\[dq]: {\[dq]secrets\[dq]: \[dq]secrets and prod path\[dq]}}
+  },
   \[dq]hosts\[dq]: [
     {
-      \[dq]name\[dq]: \[dq]nas\[dq],
-      \[dq]hostname\[dq]: \[dq]192.0.2.254\[dq],
-      \[dq]aliases\[dq]: [\[dq]storage\[dq]],
-      \[dq]user\[dq]: \[dq]root\[dq],
-      \[dq]modules\[dq]: {\[dq]ssh\[dq]: {\[dq]options\[dq]: {\[dq]RequestTTY\[dq]: \[dq]yes\[dq]}}},
+      \[dq]name\[dq]: \[dq]vault-01\[dq],
+      \[dq]hostname\[dq]: \[dq]192.0.2.30\[dq],
+      \[dq]aliases\[dq]: [\[dq]vault\[dq]],
+      \[dq]notes\[dq]: \[dq]secrets store\[dq],
+      \[dq]groups\[dq]: [\[dq]zone_app\[dq], \[dq]no_auto_update\[dq]],
+      \[dq]reasons\[dq]: {\[dq]no_auto_update\[dq]: \[dq]secrets\[dq]},
       \[dq]last_updated\[dq]: \[dq]2026-10-02T21:14:00+01:00\[dq]
     }
   ]
@@ -408,12 +623,14 @@ _
 T{
 \f[B]name\f[R]
 T}@T{
-ssh alias; required
+ssh alias and Ansible inventory
+hostname; required
 T}
 T{
 \f[B]hostname\f[R]
 T}@T{
-Address ssh connects to; required
+Address ssh and Ansible connect to;
+required
 T}
 T{
 \f[B]aliases\f[R]
@@ -429,14 +646,20 @@ T}
 T{
 \f[B]notes\f[R]
 T}@T{
-Written as a comment above the Host
-block
+A comment above the Host block, and the
+Ansible description
 T}
 T{
-\f[B]groups\f[R], \f[B]reasons\f[R]
+\f[B]groups\f[R]
 T}@T{
-Group membership, and why; for modules
-that use groups
+Groups the host is in, each declared
+under \f[B]groups\f[R]
+T}
+T{
+\f[B]reasons\f[R]
+T}@T{
+Why the host is in a group: a reason key
+that group declares
 T}
 T{
 \f[B]exclude\f[R]
@@ -458,6 +681,21 @@ in order
 T}
 .TE
 .PP
+Every group a host uses is declared
+under \f[B]groups\f[R], even as an empty
+\f[V]{}\f[R], so a typo fails instead of
+creating a group.
+No command declares groups yet; edit the
+file.
+A declaration takes three optional keys:
+\f[B]description\f[R], whose first line
+is a zone\[aq]s section header in the
+hosts file and whose further lines
+become comments under it;
+\f[B]children\f[R], the group\[aq]s
+child groups; and \f[B]reasons\f[R], an
+ordered map of reason key to text.
+.PP
 Data for a module that isn\[aq]t
 installed is kept as it is, so removing
 a plugin never loses anything.
@@ -469,6 +707,34 @@ A file that fails to parse stops
 \f[B]ari\f[R] with the path and the
 error.
 It is never treated as empty.
+.SH VALIDATION
+.PP
+\f[B]add\f[R] and \f[B]edit\f[R] check
+the host they write and save nothing if
+any check fails, listing every problem
+at once: the name and aliases are valid
+ssh host names and unique across all
+inventories, the hostname has no spaces,
+the port is 1-65535, every group is
+declared, every reason is one its group
+declares, and each installed module
+accepts the host\[aq]s data.
+ssh options can\[aq]t repeat a keyword
+the host has a field for, like
+\f[B]User\f[R] or \f[B]Port\f[R].
+.PP
+\f[B]export\f[R] checks every inventory
+it covers before writing anything.
+Beyond names, groups and reasons, every
+child group must be declared and
+children may not form a cycle.
+The \f[B]ansible\f[R] module adds its
+own rules: every declared group is a
+valid Ansible group name and matches
+exactly one entry in the
+\f[B]groups\f[R] table, and, when
+\f[B]zones\f[R] is set, every host it
+exports is in exactly one zone.
 .SH GENERATED SSH CONFIG
 .PP
 Hosts are sorted by name.
@@ -492,6 +758,51 @@ over it.
 \f[V]Include config.d/*.conf\f[R] never
 matches the \f[V].tmp\f[R], so ssh never
 reads a half-written file.
+.SH GENERATED ANSIBLE INVENTORY
+.PP
+The hosts file gets \f[B]all.vars\f[R]
+from the defaults, in the order
+\f[B]ansible_user\f[R],
+\f[B]ansible_ssh_private_key_file\f[R],
+\f[B]ansible_port\f[R].
+With \f[B]zones\f[R] set, hosts come in
+sections, one per zone in the order the
+zones are declared, each opened by a
+blank line and a header comment padded
+to 62 characters.
+A zone without a description uses its
+group name.
+Within a section hosts sort by IP
+address, with names that aren\[aq]t
+addresses after them.
+Each host gets \f[B]ansible_host\f[R],
+\f[B]description\f[R] from its notes,
+and \f[B]ansible_user\f[R],
+\f[B]ansible_port\f[R] or
+\f[B]ansible_ssh_private_key_file\f[R]
+only where it differs from the defaults.
+.PP
+Each file in the \f[B]groups\f[R] table
+holds the groups its globs match, in
+declaration order, under
+\f[V]all: children:\f[R], one blank line
+before each group.
+A group lists its children first, then
+its hosts in the hosts file\[aq]s order.
+Hosts without a reason come first; then
+each reason, in the order its group
+declares them, writes its text as a
+comment followed by its hosts.
+.PP
+Values are written plain when YAML reads
+them back unchanged, and double-quoted
+otherwise.
+The same inventory always produces the
+same bytes, so a diff of the generated
+files shows only real changes.
+Files in the directory that the
+\f[B]groups\f[R] table doesn\[aq]t name
+are never touched.
 .SH FILES
 .PP
 .TS
@@ -544,8 +855,9 @@ _
 T{
 \f[B]ARI_INVENTORY\f[R]
 T}@T{
-Inventory for \f[B]import\f[R] when
-\f[B]-i\f[R] is not given
+Inventory for \f[B]add\f[R] and
+\f[B]import\f[R] when \f[B]-i\f[R] is
+not given
 T}
 T{
 \f[B]XDG_CONFIG_HOME\f[R]
@@ -578,12 +890,35 @@ ari export
 \f[R]
 .fi
 .PP
-Bring in hand-kept hosts that must never
-reach Ansible:
+Bring an Ansible inventory in, then the
+ssh-only hosts beside it:
 .IP
 .nf
 \f[C]
+ari import ansible \[ti]/work/infra/ansible/inventory -i work
 ari import ssh \[ti]/.ssh/config.d/20-work.conf -i work --exclude ansible
+\f[R]
+.fi
+.PP
+Add a host to a zone and a monitoring
+group, then give it a reason to stay out
+of updates:
+.IP
+.nf
+\f[C]
+ari -i work add vault-03 192.0.2.32 --group zone_app --group monitoring_db
+ari edit vault-03 --group no_auto_update:secrets
+ari export
+\f[R]
+.fi
+.PP
+Move a host to a new address, and retire
+another:
+.IP
+.nf
+\f[C]
+ari edit vault-03 --hostname 192.0.2.33
+ari rm oldbox
 \f[R]
 .fi
 .PP
@@ -606,4 +941,5 @@ ari export --force
 .SH SEE ALSO
 .PP
 \f[B]ssh\f[R](1),
-\f[B]ssh_config\f[R](5)
+\f[B]ssh_config\f[R](5),
+\f[B]ansible-inventory\f[R](1)
