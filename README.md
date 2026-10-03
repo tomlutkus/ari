@@ -82,11 +82,11 @@ all:
 
 ## How it stays safe
 
-ssh resolves every generated file in one namespace where the first match wins, so a duplicate name would silently shadow a host. ari refuses any name or alias already used in another inventory, on every add, edit and import.
+ssh resolves every generated file in one namespace where the first match wins, so a duplicate name would silently shadow a host. ari refuses any name or alias already in use, on every add, edit and import.
 
 Group membership lives on the host record. Removing a host removes it from every group, no group can list a host that doesn't exist, and a group has to be declared before a host can join it, so a typo fails instead of creating one. Before writing Ansible, ari checks that every host sits in exactly one zone and every group goes to exactly one file. Any failure writes nothing and lists every problem at once.
 
-Generated files are output. ari records a hash of everything it writes and won't overwrite a file that was edited by hand since, unless you pass `--force` after looking at it. Writes go to a temp file and get renamed into place, and `Include config.d/*.conf` never matches the temp name, so ssh never reads half a file.
+Generated files are output. ari records a hash of everything it writes and won't overwrite a file that was edited by hand since, unless you pass `--force` after looking at it. Importing a file adopts it for the guard only when the inventory now holds all of it: a conflict, a refused host, or anything ari couldn't represent leaves the file alone until you've checked it. Writes go to a temp file and get renamed into place, and `Include config.d/*.conf` never matches the temp name, so ssh never reads half a file.
 
 Every host is written out in full, with no `Host *` blocks. Those ignore file boundaries, and `IdentityFile` accumulates across matching blocks, so a default in one file would offer its key to every host you have.
 
@@ -193,6 +193,8 @@ $ make check
 ```
 
 `make check` runs the tests, then fails if `man/ari.1` no longer matches `docs/ari.1.md`. `make man` regenerates it with pandoc. The ssh and Ansible tests compare `ssh -G` and `ansible-inventory --list` output when those tools are installed, and skip otherwise.
+
+A release bumps `version` in `pyproject.toml` and the footer in `docs/ari.1.md`, adds its entry to [CHANGELOG.md](CHANGELOG.md), passes `make check`, which fails if any of the three disagree, and gets a `vX.Y.Z` tag.
 
 Tests run on sanitized fixtures only: documentation addresses from RFC 5737 and invented names. Real inventories never belong in this repo.
 

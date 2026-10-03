@@ -192,6 +192,12 @@ class _Reader:
     route: dict[str, str] = field(default_factory=dict)  # group: the file that defines it
     referenced: dict[str, str] = field(default_factory=dict)  # child named but not defined: where
     members: dict[str, list[str]] = field(default_factory=dict)
+    lossy: bool = False
+
+    def _lose(self, message: str) -> None:
+        """Something Ansible would use that the import leaves out."""
+        self.warnings.append(message)
+        self.lossy = True
 
     def read(self, path: Path) -> None:
         where = tilde(path)
@@ -224,7 +230,7 @@ class _Reader:
         if value is None:
             return {}
         if not isinstance(value, dict):
-            self.warnings.append(f"{where}: not a mapping; skipped")
+            self._lose(f"{where}: not a mapping; skipped")
             return {}
         return value
 
@@ -233,7 +239,7 @@ class _Reader:
         if value is None:
             return
         if not isinstance(value, dict):
-            self.warnings.append(f"{where}: all is not a mapping; skipped")
+            self._lose(f"{where}: all is not a mapping; skipped")
             return
         for key, data in value.items():
             if key == "vars":
@@ -245,23 +251,23 @@ class _Reader:
                 for name, group in self._mapping(data, f"{where}: all.children").items():
                     self._group(str(name), group, path)
             else:
-                self.warnings.append(f"{where}: all.{key} not imported")
+                self._lose(f"{where}: all.{key} not imported")
 
     def _all_vars(self, data: Any, where: str) -> None:
         if not isinstance(data, dict):
-            self.warnings.append(f"{where}: all.vars is not a mapping; skipped")
+            self._lose(f"{where}: all.vars is not a mapping; skipped")
             return
         self.saw_vars = True
         for key, value in data.items():
             field_name = _VARS.get(key)
             if field_name is None:
-                self.warnings.append(f"{where}: all.vars.{key} not imported")
+                self._lose(f"{where}: all.vars.{key} not imported")
                 continue
             value = self._field(field_name, value, f"{where}: all.vars")
             if value is None:
                 continue
             if field_name in self.defaults and self.defaults[field_name] != value:
-                self.warnings.append(f"{where}: all.vars.{key} differs from an earlier file; kept the first")
+                self._lose(f"{where}: all.vars.{key} differs from an earlier file; kept the first")
                 continue
             self.defaults[field_name] = value
 
@@ -270,10 +276,10 @@ class _Reader:
             try:
                 return check_port(value, where)
             except HostsError as e:
-                self.warnings.append(f"{e}; not imported")
+                self._lose(f"{e}; not imported")
                 return None
         if not isinstance(value, str) or not value or "\n" in value:
-            self.warnings.append(f"{where}: {value!r} isn't a one-line string; not imported")
+            self._lose(f"{where}: {value!r} isn't a one-line string; not imported")
             return None
         return value
 
@@ -282,15 +288,15 @@ class _Reader:
         try:
             check_token(name, "name", tilde(path))
         except HostsError as e:
-            self.warnings.append(f"{e}; host skipped")
+            self._lose(f"{e}; host skipped")
             return
         data = data or {}
         if not isinstance(data, dict):
-            self.warnings.append(f"{where}: host vars are not a mapping; host skipped")
+            self._lose(f"{where}: host vars are not a mapping; host skipped")
             return
         hostname = str(data.get("ansible_host", name))
         if not hostname or any(c.isspace() for c in hostname):
-            self.warnings.append(f"{where}: ansible_host {hostname!r} has spaces; host skipped")
+            self._lose(f"{where}: ansible_host {hostname!r} has spaces; host skipped")
             return
         host = Host(name=name, hostname=hostname)
         for key, value in data.items():
@@ -301,13 +307,13 @@ class _Reader:
             elif key in _VARS:
                 setattr(host, _VARS[key], self._field(_VARS[key], value, where))
             else:
-                self.warnings.append(f"{where}: {key} not imported")
+                self._lose(f"{where}: {key} not imported")
         existing = self.hosts.get(name)
         if existing is None:
             self.hosts[name] = host
             self.hosts_file = self.hosts_file or path.name
         elif existing.to_dict() != host.to_dict():
-            self.warnings.append(f"{where}: defined again with different vars; kept the first")
+            self._lose(f"{where}: defined again with different vars; kept the first")
 
     def _group(self, name: str, data: Any, path: Path) -> None:
         where = f"{tilde(path)} ({name})"
@@ -320,7 +326,7 @@ class _Reader:
         if data is None:
             return
         if not isinstance(data, dict):
-            self.warnings.append(f"{where}: not a mapping; skipped")
+            self._lose(f"{where}: not a mapping; skipped")
             return
         group = self.groups[name]
         for key, value in data.items():
@@ -342,7 +348,7 @@ class _Reader:
                     elif child not in self.groups:
                         self.referenced.setdefault(child, path.name)
             else:
-                self.warnings.append(f"{where}: {key} not imported")
+                self._lose(f"{where}: {key} not imported")
 
     def result(self, directory: Path) -> ImportResult:
         for name, file in self.referenced.items():
@@ -354,7 +360,7 @@ class _Reader:
             for name in names:
                 host = self.hosts.get(name)
                 if host is None:
-                    self.warnings.append(f"{self.route[group]}: {group} lists {name}, which no hosts section defines; left out")
+                    self._lose(f"{self.route[group]}: {group} lists {name}, which no hosts section defines; left out")
                 elif group not in host.groups:
                     host.groups.append(group)
         for host in self.hosts.values():
@@ -369,7 +375,7 @@ class _Reader:
         if routes:
             settings["groups"] = dict(sorted(routes.items()))
         defaults = Defaults(**self.defaults) if self.saw_vars else None
-        return ImportResult(list(self.hosts.values()), self.warnings, self.files, defaults, self.groups, settings)
+        return ImportResult(list(self.hosts.values()), self.warnings, self.files, defaults, self.groups, settings, self.lossy)
 
 
 class AnsibleModule(Module):

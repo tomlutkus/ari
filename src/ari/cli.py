@@ -168,6 +168,8 @@ def cmd_import(cfg: Config, args: argparse.Namespace) -> int:
         _note("warning", "yellow", warning)
     for conflict in report.conflicts:
         _note("conflict", "red", conflict)
+    for refused in report.refused:
+        _note("refused", "red", refused)
     if report.defaults_set:
         values = ", ".join(f"{k} {v}" for k, v in report.defaults_set.items())
         out.print(f"{report.inventory}: defaults set from {report.defaults_from}: {values}", soft_wrap=True)
@@ -179,10 +181,12 @@ def cmd_import(cfg: Config, args: argparse.Namespace) -> int:
         out.print(f"{report.inventory}: {_plural(len(report.groups_added), 'group')} declared", soft_wrap=True)
     if not (report.added or report.merged or report.unchanged):
         out.print(f"{report.inventory}: nothing imported from {report.source}")
+    for path in report.unadopted:
+        _note("note", "yellow", f"{path} not adopted, so an export over it needs --force once you've checked it")
     if report.settings and args.module not in cfg.get(report.inventory).modules:
         out.print(f"\nadd to {tilde(cfg.path)}:\n")
         out.print(_toml_table(f"inventories.{report.inventory}.{args.module}", report.settings), soft_wrap=True, markup=False)
-    return 1 if report.conflicts else 0
+    return 1 if report.conflicts or report.refused else 0
 
 
 def _toml_key(key: str) -> str:

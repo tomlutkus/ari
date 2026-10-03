@@ -37,6 +37,9 @@ class ImportResult:
     groups: dict[str, GroupDef] = field(default_factory=dict)
     # A config.toml table for this module that would write back to the source.
     settings: dict[str, Any] | None = None
+    # Something in the source that changes behaviour couldn't be represented. An export over
+    # these files would drop it, so the import doesn't adopt them for the guard.
+    lossy: bool = False
 
 
 class Module:
@@ -72,6 +75,11 @@ class Module:
                 existing[key] = value
                 changed = True
         return changed
+
+    def conflicts(self, existing: dict[str, Any], incoming: dict[str, Any], defaults: dict[str, Any]) -> list[str]:
+        """On re-import: values the source sets differently from the record, which merge would
+        otherwise drop silently. Each is reported and the host is left alone."""
+        return []
 
     def describe(self, inventory: Inventory, host: Host) -> list[str]:
         """Lines for `ari show`."""

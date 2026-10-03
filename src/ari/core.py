@@ -163,7 +163,9 @@ class ImportReport:
     merged: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
+    refused: list[str] = field(default_factory=list)  # hosts that fail the checks every write runs
     warnings: list[str] = field(default_factory=list)
+    unadopted: list[str] = field(default_factory=list)  # sources the guard didn't record
     defaults_set: dict[str, str] = field(default_factory=dict)
     defaults_from: str = "the most common values"
     groups_added: list[str] = field(default_factory=list)
@@ -203,6 +205,8 @@ def _strip_defaults(inventory: Inventory, host: Host) -> None:
 
 
 def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | None:
+    """What the source sets differently from the record. Merge only fills gaps, so anything
+    returned here would otherwise be dropped while the report said nothing."""
     if incoming.hostname != existing.hostname:
         return f"HostName {incoming.hostname} differs from {existing.hostname}"
     user = inventory.user(existing)
@@ -213,6 +217,10 @@ def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | N
     key = inventory.ssh_key(existing)
     if incoming.ssh_key and key and incoming.ssh_key != key:
         return f"IdentityFile {incoming.ssh_key} differs from {key}"
+    for name, data in incoming.modules.items():
+        found = _module(name).conflicts(existing.modules.get(name, {}), data, inventory.defaults.modules.get(name, {}))
+        if found:
+            return "; ".join(found)
     return None
 
 
@@ -260,6 +268,16 @@ def import_hosts(
     target = inventories[cfg.get(inventory_name).name]
     label = tilde(result.files[0][0]) if result.files else (source or module_name)
     report = ImportReport(target.name, label, warnings=list(result.warnings))
+
+    # A host that would make the inventory unreadable never gets near it, nor near the defaults.
+    readable = []
+    for host in result.hosts:
+        problems = _shape_problems(target, host)
+        if problems:
+            report.refused += problems
+        else:
+            readable.append(host)
+    result.hosts = readable
 
     fresh = not target.hosts and target.defaults.is_empty()
     if result.defaults is not None:
@@ -313,12 +331,20 @@ def import_hosts(
             continue
         existing = target.find(host.name)
         if existing is None:
-            if result.defaults is None and host.user is None and target.defaults.user:
-                report.warnings.append(f"{host.name}: no User in the source; the default user {target.defaults.user} will apply")
-            if result.defaults is None and host.ssh_key is None and target.defaults.ssh_key:
-                report.warnings.append(f"{host.name}: no IdentityFile in the source; the default key will apply")
+            inherits_user = result.defaults is None and host.user is None and target.defaults.user
+            inherits_key = result.defaults is None and host.ssh_key is None and target.defaults.ssh_key
             _strip_defaults(target, host)
             host.exclude = list(exclude)
+            # Checked against everything already in the inventory, hosts added earlier in this
+            # import included, so two blocks sharing an alias can't both get in.
+            problems = _host_problems(inventories, target, host, None)
+            if problems:
+                report.refused += problems
+                continue
+            if inherits_user:
+                report.warnings.append(f"{host.name}: no User in the source; the default user {target.defaults.user} will apply")
+            if inherits_key:
+                report.warnings.append(f"{host.name}: no IdentityFile in the source; the default key will apply")
             host.last_updated = now()
             target.hosts.append(host)
             report.added.append(host.name)
@@ -326,19 +352,33 @@ def import_hosts(
         difference = _difference(target, existing, host)
         if difference:
             report.conflicts.append(f"{host.name}: {difference}; not merged")
-        elif _merge(target, existing, host):
-            existing.last_updated = now()
-            report.merged.append(host.name)
-        else:
+            continue
+        candidate = copy.deepcopy(existing)
+        _merge(target, candidate, host)
+        _strip_defaults(target, candidate)
+        if candidate.to_dict() == existing.to_dict():
             report.unchanged.append(host.name)
+            continue
+        problems = _host_problems(inventories, target, candidate, existing)
+        if problems:
+            report.refused += problems
+            continue
+        candidate.last_updated = now()
+        target.hosts = [candidate if h is existing else h for h in target.hosts]
+        report.merged.append(host.name)
 
     if report.added or report.merged or report.defaults_set or report.groups_added or groups_changed:
         storage.save(target)
+    # The guard records a source only when the inventory now holds all of it, so an export over
+    # that file loses nothing. Anything conflicted, refused or left out means a person looks first.
     if result.files:
-        guard = Guard()
-        for path, data in result.files:
-            guard.record(path, data)
-        guard.save()
+        if report.conflicts or report.refused or result.lossy:
+            report.unadopted = [tilde(path) for path, _ in result.files]
+        else:
+            guard = Guard()
+            for path, data in result.files:
+                guard.record(path, data)
+            guard.save()
     return report
 
 
@@ -423,9 +463,9 @@ def _apply(host: Host, c: Changes) -> list[str]:
     return problems
 
 
-def _host_problems(inventories: dict[str, Inventory], inventory: Inventory, host: Host, original: Host | None) -> list[str]:
-    """Everything a host must meet before it's saved: the load rules, its module data, unique names
-    across all inventories, declared groups and valid reasons."""
+def _shape_problems(inventory: Inventory, host: Host) -> list[str]:
+    """The record on its own: the rules load enforces, and each installed module's data rules.
+    A host that fails these would make the inventory unreadable once saved."""
     where = f"{inventory.name} ({host.name})"
     problems = []
     try:
@@ -442,6 +482,14 @@ def _host_problems(inventories: dict[str, Inventory], inventory: Inventory, host
     for label, value in (("user", host.user), ("key", host.ssh_key)):
         if value and ("\n" in value or "\r" in value):
             problems.append(f"{where}: {label} must be one line")
+    return problems
+
+
+def _host_problems(inventories: dict[str, Inventory], inventory: Inventory, host: Host, original: Host | None) -> list[str]:
+    """Everything a host must meet before it's saved, by add, edit or import: its shape, names
+    unique across all inventories, declared groups and valid reasons."""
+    where = f"{inventory.name} ({host.name})"
+    problems = _shape_problems(inventory, host)
 
     seen: set[str] = set()
     for token in host.tokens():

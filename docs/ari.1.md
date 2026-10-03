@@ -2,7 +2,7 @@
 title: ARI
 section: 1
 header: User Commands
-footer: ari 0.3.0
+footer: ari 0.4.0
 date: October 2026
 ---
 
@@ -109,15 +109,17 @@ List the installed modules, whether each can import and export, and which invent
 
 ## import *MODULE* [*SOURCE*]
 
-Read hosts into one inventory through *MODULE*. A host already in the inventory is merged: new aliases, groups, module data and missing notes are added. A different HostName, User, Port or IdentityFile is reported as a conflict and left alone. A host whose name or alias already belongs to another inventory is refused.
+Read hosts into one inventory through *MODULE*. Every host goes through the same checks as **add**: one that fails is refused and reported, and the rest still import. A host already in the inventory is merged: new aliases, groups, options and missing notes are added. A value the source sets differently, whether HostName, User, Port, IdentityFile or an ssh option such as ProxyJump, is a conflict, and that host is left alone. Hosts that merged are saved even when others conflicted or were refused; the exit status is then 1.
 
-Importing into an empty inventory sets its defaults: from the source's own defaults when it has them, like Ansible's **all.vars**, otherwise to the user and key most hosts share. Each host stores only what differs. Import records the hash of every file it reads, so exporting over those same files afterwards passes the guard.
+Importing into an empty inventory sets its defaults: from the source's own defaults when it has them, like Ansible's **all.vars**, otherwise to the user and key most hosts share. Each host stores only what differs.
+
+A clean import adopts the files it read: their hashes go to the guard, so exporting over them afterwards passes. If anything conflicted, was refused, or couldn't be represented, such as a skipped `Host *` block or a second LocalForward, the files are not adopted, and an export over one of them needs **--force** once you've checked it.
 
 | Option | Meaning |
 |-------|-------------|
 | **--exclude** *MODULE* | Keep the imported hosts out of *MODULE*'s output; repeatable |
 
-With the **ssh** module, *SOURCE* is a config file. The first token on a Host line becomes the name and the rest become aliases. **HostName**, **User**, **Port** and **IdentityFile** become fields, **IdentitiesOnly yes** is implied by a key, and every other keyword is kept as an ssh option, in order. Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, the first value is kept, as ssh does. A block without **User** stays without one, so ssh uses whoever connects.
+With the **ssh** module, *SOURCE* is a config file. The first token on a Host line becomes the name and the rest become aliases. **HostName**, **User**, **Port** and **IdentityFile** become fields, and every other keyword is kept as an ssh option, in order. Export writes **IdentitiesOnly yes** after a key unless the host sets IdentitiesOnly itself, so a block with a key and no IdentitiesOnly is stored with **IdentitiesOnly no**, which is what ssh did with it. Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, ssh uses the first value and so does ari, except for **IdentityFile**, **CertificateFile**, **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv**: ssh uses every one of those, ari keeps the first and warns. A block without **User** stays without one, so ssh uses whoever connects. Point **ssh.path** only at a file ari owns: an Include, Match or `Host *` in it would be gone after the next export.
 
 With the **ansible** module, *SOURCE* is an inventory directory, and every **.yml** and **.yaml** file at its top level is read. **all.vars** become the defaults, each host's **ansible_host**, **ansible_user**, **ansible_port**, **ansible_ssh_private_key_file** and **description** become its fields, and group membership, child groups and the file each group came from carry over. Anything else is reported as not imported: other vars, group vars, and members that no hosts section defines. Comments are read by nothing and listed with their file and line, so zone headers and reasons can be filled in by hand. When the inventory has no **ansible** table yet, import prints one to paste into config.toml, with each file's groups listed by name.
 
@@ -278,7 +280,7 @@ Values are written plain when YAML reads them back unchanged, and double-quoted 
 
 # EXIT STATUS
 
-**0** on success. **1** on an error, a validation failure, a guard refusal or an import conflict. **2** on a usage error. **130** when interrupted.
+**0** on success. **1** on an error, a validation failure, a guard refusal, or an import conflict or refusal. **2** on a usage error. **130** when interrupted.
 
 # EXAMPLES
 

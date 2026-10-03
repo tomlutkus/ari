@@ -118,12 +118,20 @@ def parse(text: str, source: str) -> tuple[list[Block], list[str]]:
     return blocks, warnings
 
 
-def to_host(block: Block, source: str, warnings: list[str]) -> Host | None:
-    """One block as a host. ssh takes the first value of a repeated keyword, so this does too.
+# Keywords ssh uses every value of when they repeat. Every other keyword is first value wins.
+# The record holds one value per keyword, so a repeat of these loses something ssh would use.
+ACCUMULATING = {"identityfile", "certificatefile", "localforward", "remoteforward", "dynamicforward", "sendenv"}
+
+
+def to_host(block: Block, source: str, warnings: list[str], dropped: list[str] | None = None) -> Host | None:
+    """One block as a host, or None when it can't be read. Whatever ssh would have used but the
+    record can't hold goes into dropped as well as warnings.
 
     A block without User stays without one: ssh would use whoever connects, and pinning the
-    importing login would be wrong on any other machine. Port 22 is ssh's own default everywhere,
-    so a missing Port is pinned to it and a later inventory default can't change it."""
+    importing login would be wrong on any other machine. A missing Port means 22, ssh's own
+    default; like every field, it's stored only when it differs from the inventory default, and
+    otherwise follows that default."""
+    dropped = [] if dropped is None else dropped
     name, *aliases = block.tokens
     host = Host(name=name, hostname=name, aliases=aliases)
     where = f"{source}:{block.line} ({name})"
@@ -134,7 +142,12 @@ def to_host(block: Block, source: str, warnings: list[str]) -> Host | None:
     for keyword, value in block.options:
         lowered = keyword.lower()
         if lowered in seen:
-            warnings.append(f"{where}: second {keyword} ignored, ssh uses the first")
+            if lowered in ACCUMULATING:
+                message = f"{where}: second {keyword} not kept; ssh uses every {keyword}, ari stores one"
+                warnings.append(message)
+                dropped.append(message)
+            else:
+                warnings.append(f"{where}: second {keyword} ignored, ssh uses the first")
             continue
         seen.add(lowered)
         match lowered:
@@ -145,8 +158,10 @@ def to_host(block: Block, source: str, warnings: list[str]) -> Host | None:
             case "port":
                 try:
                     host.port = check_port(int(_single(value)), where)
-                except ValueError:
-                    warnings.append(f"{where}: Port {value!r} is not a number; host skipped")
+                except (ValueError, HostsError):
+                    message = f"{where}: Port {value!r} is not a port number; host skipped"
+                    warnings.append(message)
+                    dropped.append(message)
                     return None
             case "identityfile":
                 host.ssh_key = _single(value)
@@ -229,6 +244,18 @@ class SshModule(Module):
         if "options" in data and not own:
             del data["options"]
 
+    def conflicts(self, existing: dict[str, Any], incoming: dict[str, Any], defaults: dict[str, Any]) -> list[str]:
+        """An option the record already has, from the host or the inventory default, with a
+        different value in the source. Keywords compare the way ssh reads them, case-insensitively."""
+        effective = {k.casefold(): (k, v) for k, v in defaults.get("options", {}).items()}
+        effective.update({k.casefold(): (k, v) for k, v in existing.get("options", {}).items()})
+        out = []
+        for keyword, value in incoming.get("options", {}).items():
+            have = effective.get(keyword.casefold())
+            if have and have[1] != value:
+                out.append(f"{keyword} {value} differs from {have[1]}")
+        return out
+
     def merge(self, existing: dict[str, Any], incoming: dict[str, Any]) -> bool:
         own = existing.setdefault("options", {})
         taken = {k.casefold() for k in own}
@@ -260,5 +287,7 @@ class SshModule(Module):
         except UnicodeDecodeError:
             raise HostsError(f"{tilde(path)}: not UTF-8 text") from None
         blocks, warnings = parse(text, tilde(path))
-        hosts = [h for b in blocks if (h := to_host(b, tilde(path), warnings))]
-        return ImportResult(hosts, warnings, [(path, data)])
+        skipped = bool(warnings)  # everything parse warns about is left out
+        dropped: list[str] = []
+        hosts = [h for b in blocks if (h := to_host(b, tilde(path), warnings, dropped))]
+        return ImportResult(hosts, warnings, [(path, data)], lossy=skipped or bool(dropped))

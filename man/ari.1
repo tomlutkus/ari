@@ -15,7 +15,7 @@
 . ftr VB CB
 . ftr VBI CBI
 .\}
-.TH "ARI" "1" "October 2026" "ari 0.3.0" "User Commands"
+.TH "ARI" "1" "October 2026" "ari 0.4.0" "User Commands"
 .hy
 .SH NAME
 .PP
@@ -296,14 +296,21 @@ with the reason.
 .PP
 Read hosts into one inventory through
 \f[I]MODULE\f[R].
+Every host goes through the same checks
+as \f[B]add\f[R]: one that fails is
+refused and reported, and the rest still
+import.
 A host already in the inventory is
-merged: new aliases, groups, module data
-and missing notes are added.
-A different HostName, User, Port or
-IdentityFile is reported as a conflict
-and left alone.
-A host whose name or alias already
-belongs to another inventory is refused.
+merged: new aliases, groups, options and
+missing notes are added.
+A value the source sets differently,
+whether HostName, User, Port,
+IdentityFile or an ssh option such as
+ProxyJump, is a conflict, and that host
+is left alone.
+Hosts that merged are saved even when
+others conflicted or were refused; the
+exit status is then 1.
 .PP
 Importing into an empty inventory sets
 its defaults: from the source\[aq]s own
@@ -312,9 +319,17 @@ Ansible\[aq]s \f[B]all.vars\f[R],
 otherwise to the user and key most hosts
 share.
 Each host stores only what differs.
-Import records the hash of every file it
-reads, so exporting over those same
-files afterwards passes the guard.
+.PP
+A clean import adopts the files it read:
+their hashes go to the guard, so
+exporting over them afterwards passes.
+If anything conflicted, was refused, or
+couldn\[aq]t be represented, such as a
+skipped \f[V]Host *\f[R] block or a
+second LocalForward, the files are not
+adopted, and an export over one of them
+needs \f[B]--force\f[R] once you\[aq]ve
+checked it.
 .PP
 .TS
 tab(@);
@@ -341,17 +356,33 @@ the name and the rest become aliases.
 \f[B]HostName\f[R], \f[B]User\f[R],
 \f[B]Port\f[R] and
 \f[B]IdentityFile\f[R] become fields,
-\f[B]IdentitiesOnly yes\f[R] is implied
-by a key, and every other keyword is
-kept as an ssh option, in order.
+and every other keyword is kept as an
+ssh option, in order.
+Export writes \f[B]IdentitiesOnly
+yes\f[R] after a key unless the host
+sets IdentitiesOnly itself, so a block
+with a key and no IdentitiesOnly is
+stored with \f[B]IdentitiesOnly no\f[R],
+which is what ssh did with it.
 Pattern Host blocks, Match blocks,
 Include lines and options outside any
 Host block are skipped with a warning.
 When a keyword repeats inside a block,
-the first value is kept, as ssh does.
+ssh uses the first value and so does
+ari, except for \f[B]IdentityFile\f[R],
+\f[B]CertificateFile\f[R],
+\f[B]LocalForward\f[R],
+\f[B]RemoteForward\f[R],
+\f[B]DynamicForward\f[R] and
+\f[B]SendEnv\f[R]: ssh uses every one of
+those, ari keeps the first and warns.
 A block without \f[B]User\f[R] stays
 without one, so ssh uses whoever
 connects.
+Point \f[B]ssh.path\f[R] only at a file
+ari owns: an Include, Match or
+\f[V]Host *\f[R] in it would be gone
+after the next export.
 .PP
 With the \f[B]ansible\f[R] module,
 \f[I]SOURCE\f[R] is an inventory
@@ -874,8 +905,8 @@ T}
 .PP
 \f[B]0\f[R] on success.
 \f[B]1\f[R] on an error, a validation
-failure, a guard refusal or an import
-conflict.
+failure, a guard refusal, or an import
+conflict or refusal.
 \f[B]2\f[R] on a usage error.
 \f[B]130\f[R] when interrupted.
 .SH EXAMPLES
