@@ -2,6 +2,8 @@
 
 import argparse
 import getpass
+import json
+import re
 import sys
 
 from rich import box
@@ -168,14 +170,40 @@ def cmd_import(cfg: Config, args: argparse.Namespace) -> int:
         _note("conflict", "red", conflict)
     if report.defaults_set:
         values = ", ".join(f"{k} {v}" for k, v in report.defaults_set.items())
-        out.print(f"{report.inventory}: defaults set from the most common values: {values}", soft_wrap=True)
+        out.print(f"{report.inventory}: defaults set from {report.defaults_from}: {values}", soft_wrap=True)
     for label, names in (("added", report.added), ("merged", report.merged), ("unchanged", report.unchanged)):
         if names:
             listed = f" ({', '.join(names)})" if len(names) <= 12 else ""
             out.print(f"{report.inventory}: {len(names)} {label}{listed}", soft_wrap=True)
+    if report.groups_added:
+        out.print(f"{report.inventory}: {_plural(len(report.groups_added), 'group')} declared", soft_wrap=True)
     if not (report.added or report.merged or report.unchanged):
         out.print(f"{report.inventory}: nothing imported from {report.source}")
+    if report.settings and args.module not in cfg.get(report.inventory).modules:
+        out.print(f"\nadd to {tilde(cfg.path)}:\n")
+        out.print(_toml_table(f"inventories.{report.inventory}.{args.module}", report.settings), soft_wrap=True, markup=False)
     return 1 if report.conflicts else 0
+
+
+def _toml_key(key: str) -> str:
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key)
+
+
+def _toml_value(value) -> str:
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _toml_table(name: str, table: dict) -> str:
+    """A table to paste into config.toml: plain keys first, then each subtable."""
+    lines = [f"[{name}]"]
+    lines += [f"{_toml_key(k)} = {_toml_value(v)}" for k, v in table.items() if not isinstance(v, dict)]
+    for key, sub in table.items():
+        if isinstance(sub, dict):
+            lines += ["", f"[{name}.{_toml_key(key)}]"]
+            lines += [f"{_toml_key(k)} = {_toml_value(v)}" for k, v in sub.items()]
+    return "\n".join(lines)
 
 
 def cmd_export(cfg: Config, args: argparse.Namespace) -> int:

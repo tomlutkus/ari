@@ -1,0 +1,43 @@
+all:
+  vars:
+    ansible_user: deploy
+    ansible_ssh_private_key_file: ~/.ssh/lab-ed25519
+    ansible_port: 22
+  hosts:
+
+    # ── app subnet (192.0.2.0/25) ───────────────────────────────
+    web-01:
+      ansible_host: 192.0.2.10
+      description: front end
+    web-02:
+      ansible_host: 192.0.2.11
+      description: front end
+    vault-01:
+      ansible_host: 192.0.2.30
+      description: secrets store
+    vault-02:
+      ansible_host: 192.0.2.31
+      description: secrets store
+
+    # ── mgmt subnet (192.0.2.128/25) ────────────────────────────
+    # node hosts connect as deploy for ansible. Root admin uses separate ssh aliases.
+    node1:
+      ansible_host: 192.0.2.131
+      description: hypervisor
+    node2:
+      ansible_host: 192.0.2.132
+      description: hypervisor
+    store1:
+      ansible_host: 192.0.2.140
+      description: "storage: backups"
+    jump:
+      ansible_host: 192.0.2.150
+      ansible_port: 2222
+
+    # ── cloud (public) ──────────────────────────────────────────
+    status:
+      ansible_host: 198.51.100.20
+      description: status page
+      ansible_user: admin
+    mirror:
+      ansible_host: mirror.example.net

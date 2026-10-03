@@ -1,0 +1,21 @@
+all:
+  children:
+
+    zone_app:
+      hosts:
+        web-01:
+        web-02:
+        vault-01:
+        vault-02:
+
+    zone_mgmt:
+      hosts:
+        node1:
+        node2:
+        store1:
+        jump:
+
+    zone_cloud:
+      hosts:
+        status:
+        mirror:

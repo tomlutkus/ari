@@ -1,0 +1,21 @@
+all:
+  children:
+
+    role_node:
+      children:
+        role_cluster:
+        role_standalone:
+
+    role_cluster:
+      hosts:
+        node1:
+        node2:
+
+    role_standalone:
+      hosts:
+        store1:
+        # old-store:
+
+    do_not_touch:
+      hosts:
+        store1:

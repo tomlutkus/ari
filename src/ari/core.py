@@ -165,6 +165,9 @@ class ImportReport:
     conflicts: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     defaults_set: dict[str, str] = field(default_factory=dict)
+    defaults_from: str = "the most common values"
+    groups_added: list[str] = field(default_factory=list)
+    settings: dict | None = None  # a config table the source suggests, for the module that read it
 
 
 def _infer_defaults(inventory: Inventory, hosts: list[Host]) -> dict[str, str]:
@@ -215,6 +218,13 @@ def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | N
 
 def _merge(inventory: Inventory, existing: Host, incoming: Host) -> bool:
     changed = False
+    if incoming.notes and not existing.notes:
+        existing.notes = incoming.notes
+        changed = True
+    for group in incoming.groups:
+        if group not in existing.groups:
+            existing.groups.append(group)
+            changed = True
     have = {t.casefold() for t in existing.tokens()}
     for alias in incoming.aliases:
         if alias.casefold() not in have:
@@ -251,8 +261,42 @@ def import_hosts(
     label = tilde(result.files[0][0]) if result.files else (source or module_name)
     report = ImportReport(target.name, label, warnings=list(result.warnings))
 
-    if not target.hosts and target.defaults.is_empty():
+    fresh = not target.hosts and target.defaults.is_empty()
+    if result.defaults is not None:
+        # The source states its own defaults; hosts that leave a field unset inherit them there too.
+        if fresh:
+            d = result.defaults
+            target.defaults.user, target.defaults.port, target.defaults.ssh_key = d.user, d.port, d.ssh_key
+            report.defaults_set = {k: str(v) for k, v in (("user", d.user), ("port", d.port), ("ssh_key", d.ssh_key)) if v is not None}
+            report.defaults_from = "the source"
+        elif (result.defaults.user, result.defaults.port, result.defaults.ssh_key) != (
+            target.defaults.user,
+            target.defaults.port,
+            target.defaults.ssh_key,
+        ):
+            report.warnings.append("the source's defaults differ from the inventory's; kept the inventory's")
+    elif fresh:
         report.defaults_set = _infer_defaults(target, result.hosts)
+    report.settings = result.settings
+
+    groups_changed = False
+    for name, group in result.groups.items():
+        mine = target.groups.get(name)
+        if mine is None:
+            target.groups[name] = copy.deepcopy(group)
+            report.groups_added.append(name)
+            continue
+        if group.description and not mine.description:
+            mine.description = group.description
+            groups_changed = True
+        for child in group.children:
+            if child not in mine.children:
+                mine.children.append(child)
+                groups_changed = True
+        for key, text in group.reasons.items():
+            if key not in mine.reasons:
+                mine.reasons[key] = text
+                groups_changed = True
 
     elsewhere = {
         token.casefold(): f"{inv.name}/{host.name}"
@@ -269,9 +313,9 @@ def import_hosts(
             continue
         existing = target.find(host.name)
         if existing is None:
-            if host.user is None and target.defaults.user:
+            if result.defaults is None and host.user is None and target.defaults.user:
                 report.warnings.append(f"{host.name}: no User in the source; the default user {target.defaults.user} will apply")
-            if host.ssh_key is None and target.defaults.ssh_key:
+            if result.defaults is None and host.ssh_key is None and target.defaults.ssh_key:
                 report.warnings.append(f"{host.name}: no IdentityFile in the source; the default key will apply")
             _strip_defaults(target, host)
             host.exclude = list(exclude)
@@ -288,7 +332,7 @@ def import_hosts(
         else:
             report.unchanged.append(host.name)
 
-    if report.added or report.merged or report.defaults_set:
+    if report.added or report.merged or report.defaults_set or report.groups_added or groups_changed:
         storage.save(target)
     if result.files:
         guard = Guard()

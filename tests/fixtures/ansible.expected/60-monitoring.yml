@@ -1,0 +1,15 @@
+all:
+  children:
+
+    monitoring_web:
+      hosts:
+        web-01:
+        web-02:
+        status:
+
+    monitoring_infra:
+      hosts:
+        node1:
+        node2:
+        store1:
+        jump:

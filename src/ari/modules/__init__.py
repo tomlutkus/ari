@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ..errors import HostsError
-from ..models import MODULE_NAME, Host, Inventory
+from ..models import MODULE_NAME, Defaults, GroupDef, Host, Inventory
 
 GROUP = "ari.modules"
 RESERVED = {"file"}  # keys an inventory table already uses
@@ -32,6 +32,11 @@ class ImportResult:
     warnings: list[str] = field(default_factory=list)
     # Sources that were read, so the guard can record them and a later export over them passes.
     files: list[tuple[Path, bytes]] = field(default_factory=list)
+    # What a source says beyond its hosts, for formats that carry it.
+    defaults: Defaults | None = None
+    groups: dict[str, GroupDef] = field(default_factory=dict)
+    # A config.toml table for this module that would write back to the source.
+    settings: dict[str, Any] | None = None
 
 
 class Module:

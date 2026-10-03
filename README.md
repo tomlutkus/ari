@@ -74,7 +74,7 @@ $ ari modules
 - [x] `ls` and `show`
 - [x] `add`, `edit` and `rm`
 - [x] Formats as modules you switch on per inventory
-- [ ] Ansible inventory export
+- [x] Ansible inventory export
 - [ ] TUI, with a key that drops you straight into ssh
 - [ ] NetBox import
 

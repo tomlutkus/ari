@@ -1,0 +1,13 @@
+all:
+  children:
+    lifecycle_frozen:
+      hosts:
+        mirror:
+
+    no_auto_update:
+      hosts:
+        # secrets and prod path
+        vault-01:
+        vault-02:
+        # remote access path, reboot kills the session running the play
+        jump:

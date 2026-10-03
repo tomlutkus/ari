@@ -18,6 +18,7 @@ ari = "ari.cli:main"
 # Built-in modules register exactly the way third-party ones do.
 [project.entry-points."ari.modules"]
 ssh = "ari.modules.ssh:SshModule"
+ansible = "ari.modules.ansible:AnsibleModule"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13"]
