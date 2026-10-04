@@ -358,6 +358,19 @@ def test_export_calls_no_module_once_validation_fails(personal, monkeypatch, cap
     assert not (personal / "ssh" / "10-personal.conf").exists()
 
 
+def test_a_stopped_export_carries_each_problem_and_prints_as_before(home):
+    write_mixed(home)
+    path = home / "config" / "ari" / "work.json"
+    data = json.loads(path.read_text())
+    data["hosts"].append({"name": "stray", "hostname": "192.0.2.200"})
+    path.write_text(json.dumps(data))
+    with pytest.raises(core.ExportStopped) as e:
+        core.export(load_config())
+    assert e.value.problems == ["work/ansible: stray is in no zone"] and e.value.hint == ""
+    assert str(e.value) == "export stopped, nothing written:\n  work/ansible: stray is in no zone"
+    assert not list((home / "ssh").iterdir())
+
+
 def test_exclude_keeps_a_host_out_of_that_module(personal, tmp_path):
     run("import", "ssh", str(FIXTURES / "personal.conf"))
     side = tmp_path / "side.conf"

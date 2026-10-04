@@ -16,7 +16,6 @@ from rich.text import Text
 from . import __version__, core
 from .config import Config, load_config
 from .errors import HostsError
-from .guard import Status
 from .paths import tilde
 
 out = Console(highlight=False)
@@ -286,10 +285,7 @@ def _toml_table(name: str, table: dict) -> str:
 def cmd_export(cfg: Config, args: argparse.Namespace) -> int:
     report = core.export(cfg, _inventory_arg(args), only=args.modules or None, force=args.force)
     for w in report.written:
-        p = w.planned
-        verb = "unchanged" if w.status is Status.SAME else "wrote"
-        mode = f"; mode set to {p.mode:04o}" if w.mode_fixed else ""
-        out.print(f"{verb} {tilde(p.path)} ({p.inventory}, {p.module}, {_plural(p.hosts, 'host')}){mode}", soft_wrap=True)
+        out.print(w.summary(), soft_wrap=True)
     for note in report.notes:
         _note("note", "dim", note)
     return 0

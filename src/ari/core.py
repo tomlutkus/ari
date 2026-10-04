@@ -827,6 +827,28 @@ class Written:
     status: Status
     mode_fixed: bool = False  # the bytes already matched; only the file mode was corrected
 
+    def summary(self) -> str:
+        """The line export prints for this file."""
+        p = self.planned
+        verb = "unchanged" if self.status is Status.SAME else "wrote"
+        hosts = f"{p.hosts} host{'s' if p.hosts != 1 else ''}"
+        mode = f"; mode set to {p.mode:04o}" if self.mode_fixed else ""
+        return f"{verb} {tilde(p.path)} ({p.inventory}, {p.module}, {hosts}){mode}"
+
+
+class ExportStopped(HostsError):
+    """An export that wrote nothing: every problem that stopped it, one each, and what to do next, if anything."""
+
+    def __init__(self, message: str, problems: list[str], hint: str = "") -> None:
+        super().__init__(message)
+        self.problems = problems
+        self.hint = hint
+
+
+def _stopped(problems: list[str], hint: str = "") -> ExportStopped:
+    message = "export stopped, nothing written:\n  " + "\n  ".join(problems) + (f"\n{hint}" if hint else "")
+    return ExportStopped(message, problems, hint)
+
 
 @dataclass
 class ExportReport:
@@ -856,7 +878,7 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
 
     # Every check, every inventory, before any module renders: export only ever sees data that passed.
     if problems:
-        raise HostsError("export stopped, nothing written:\n  " + "\n  ".join(problems))
+        raise _stopped(problems)
     planned = [
         Planned(out.path, out.data, name, mc.module.name, out.hosts, out.mode)
         for name, inventory, mc, hosts in targets
@@ -869,7 +891,8 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
     paths = Counter(p.path.resolve() for p in planned)
     shared = [tilde(p) for p, n in paths.items() if n > 1]
     if shared:
-        raise HostsError(f"export stopped, nothing written: more than one target writes {', '.join(shared)}")
+        problem = f"more than one target writes {', '.join(shared)}"
+        raise ExportStopped(f"export stopped, nothing written: {problem}", [problem])
 
     guard = Guard()
     checked = [(p, guard.status(p.path, p.data)) for p in planned]
@@ -879,9 +902,7 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
             f"{tilde(p.path)}: " + ("edited since the last export" if s is Status.CHANGED else "exists and wasn't written by ari")
             for p, s in blocked
         ]
-        raise HostsError(
-            "export stopped, nothing written:\n  " + "\n  ".join(lines) + "\nreview the file, then rerun with --force"
-        )
+        raise _stopped(lines, "review the file, then rerun with --force")
 
     for p, s in checked:
         fixed = False

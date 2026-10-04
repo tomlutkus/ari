@@ -174,8 +174,10 @@ The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and 
 |-------|-------------|
 | **/** | Move to the filter. Letters typed there go into the filter, never to the keys below |
 | **Enter** | In the filter, back to the list. In the list, the selected host, as **show** prints it |
-| **Escape** | In the list or the filter, clear the filter. In a host's details, back to the list |
+| **Escape** | In the list or the filter, clear the filter. In a host's details or an export report, back to the list |
 | **s** | **ssh** to the selected host, from the list or its details. The TUI hands the terminal to ssh and comes back when the session ends; if ssh fails to connect (exit 255), the TUI says so once it's back |
+| **d** | Delete the selected host, from the list or its details, once **y** answers the prompt; **n** or **Escape** keeps it. The list reads the inventories again, and the cursor lands on the row that took the host's place |
+| **x** | Export what the TUI lists, as **ari export** does: each file as export reports it, or every problem that stopped it, with nothing written. A hand-edited target stays refused; overwriting it takes **ari export --force** |
 | **q** | Quit |
 
 # OPTIONS

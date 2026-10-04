@@ -61,7 +61,8 @@ zones = "zone_*"
 
 
 def write_mixed(home):
-    """Two inventories, ssh in both and ansible in work, with a host excluded from each module."""
+    """Two inventories, ssh in both and ansible in work, with a host excluded from each module.
+    Hosts are sorted by name, as every save leaves them."""
     write_config(home, MIXED)
     root = home / "config" / "ari"
     (root / "personal.json").write_text(json.dumps({
@@ -80,10 +81,10 @@ def write_mixed(home):
             "no_auto_update": {"reasons": {"secrets": "secrets and prod path"}},
         },
         "hosts": [
+            {"name": "fw", "hostname": "203.0.113.1", "exclude": ["ansible"]},
             {"name": "vault-01", "hostname": "192.0.2.30", "groups": ["zone_app", "no_auto_update"],
              "reasons": {"no_auto_update": "secrets"}},
             {"name": "web-01", "hostname": "192.0.2.10", "user": "admin", "port": 22, "groups": ["zone_app"]},
-            {"name": "fw", "hostname": "203.0.113.1", "exclude": ["ansible"]},
         ],
     }))
 

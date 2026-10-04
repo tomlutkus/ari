@@ -650,8 +650,8 @@ T{
 T}@T{
 In the list or the filter, clear the
 filter.
-In a host\[aq]s details, back to the
-list
+In a host\[aq]s details or an export
+report, back to the list
 T}
 T{
 \f[B]s\f[R]
@@ -662,6 +662,28 @@ The TUI hands the terminal to ssh and
 comes back when the session ends; if ssh
 fails to connect (exit 255), the TUI
 says so once it\[aq]s back
+T}
+T{
+\f[B]d\f[R]
+T}@T{
+Delete the selected host, from the list
+or its details, once \f[B]y\f[R] answers
+the prompt; \f[B]n\f[R] or
+\f[B]Escape\f[R] keeps it.
+The list reads the inventories again,
+and the cursor lands on the row that
+took the host\[aq]s place
+T}
+T{
+\f[B]x\f[R]
+T}@T{
+Export what the TUI lists, as \f[B]ari
+export\f[R] does: each file as export
+reports it, or every problem that
+stopped it, with nothing written.
+A hand-edited target stays refused;
+overwriting it takes \f[B]ari export
+--force\f[R]
 T}
 T{
 \f[B]q\f[R]

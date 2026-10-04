@@ -6,6 +6,7 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 
 - `ari` with no command on a terminal opens a TUI: a table of every host, or of the inventory `-i` names, under a filter that narrows it as you type and matches what `ls --search` matches. `/` moves to the filter, Enter shows the host as `show` prints it, `s` runs ssh and comes back to the list when the session ends, `q` quits. Without a terminal, `ari` prints help as before. textual is a new dependency.
 - `ls` and the TUI have a column per module that writes files, headed by its name: `✓` when `export` writes the host there, `excluded` when the host lists the module in `exclude`, `·` when its inventory doesn't have the module on. In `ls` they sit between PORT and GROUPS.
+- In the TUI, `d` deletes the selected host after a `y` at the prompt, from the list or its details, and `x` exports what the TUI lists. The report shows each file as `ari export` prints it, or every problem that stopped the export with nothing written. A hand-edited file still takes `ari export --force` from the shell.
 
 ## 0.5.0 (2026-10-04)
 
