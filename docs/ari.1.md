@@ -174,11 +174,17 @@ The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and 
 |-------|-------------|
 | **/** | Move to the filter. Letters typed there go into the filter, never to the keys below |
 | **Enter** | In the filter, back to the list. In the list, the selected host, as **show** prints it |
-| **Escape** | In the list or the filter, clear the filter. In a host's details or an export report, back to the list |
+| **Escape** | In the list or the filter, clear the filter. In a host's details, an export report or the form, back to the list without saving |
 | **s** | **ssh** to the selected host, from the list or its details. The TUI hands the terminal to ssh and comes back when the session ends; if ssh fails to connect (exit 255), the TUI says so once it's back |
+| **a** | Add a host, in the form below |
+| **e** | Edit the selected host, from the list or its details, in the same form filled with its own values |
 | **d** | Delete the selected host, from the list or its details, once **y** answers the prompt; **n** or **Escape** keeps it. The list reads the inventories again, and the cursor lands on the row that took the host's place |
 | **x** | Export what the TUI lists, as **ari export** does: each file as export reports it, or every problem that stopped it, with nothing written. A hand-edited target stays refused; overwriting it takes **ari export --force** |
 | **q** | Quit |
+
+The form holds the inventory (on **a** only), name, hostname, user, port, key, notes, aliases separated by spaces, ssh options one per line as ssh_config takes them (*KEYWORD VALUE* or *KEYWORD*=*VALUE*), and a box per module to exclude the host from. Groups aren't on it. An empty user, port or key follows the inventory default, which shows in the empty field; emptying one that's set goes back to the default, as **''** does for **edit**.
+
+**Tab** and **Enter** move to the next field, **Ctrl+S** saves and **Escape** cancels. Saving runs the checks **add** and **edit** run and saves nothing if any fails: each problem shows under the field it's about, and one that belongs to no field at the top. After a save the list reads the inventories again with the cursor on the host, and says so when the filter hides it.
 
 # OPTIONS
 

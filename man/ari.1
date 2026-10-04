@@ -650,8 +650,9 @@ T{
 T}@T{
 In the list or the filter, clear the
 filter.
-In a host\[aq]s details or an export
-report, back to the list
+In a host\[aq]s details, an export
+report or the form, back to the list
+without saving
 T}
 T{
 \f[B]s\f[R]
@@ -662,6 +663,18 @@ The TUI hands the terminal to ssh and
 comes back when the session ends; if ssh
 fails to connect (exit 255), the TUI
 says so once it\[aq]s back
+T}
+T{
+\f[B]a\f[R]
+T}@T{
+Add a host, in the form below
+T}
+T{
+\f[B]e\f[R]
+T}@T{
+Edit the selected host, from the list or
+its details, in the same form filled
+with its own values
 T}
 T{
 \f[B]d\f[R]
@@ -691,6 +704,36 @@ T}@T{
 Quit
 T}
 .TE
+.PP
+The form holds the inventory (on
+\f[B]a\f[R] only), name, hostname, user,
+port, key, notes, aliases separated by
+spaces, ssh options one per line as
+ssh_config takes them (\f[I]KEYWORD
+VALUE\f[R] or
+\f[I]KEYWORD\f[R]=\f[I]VALUE\f[R]), and
+a box per module to exclude the host
+from.
+Groups aren\[aq]t on it.
+An empty user, port or key follows the
+inventory default, which shows in the
+empty field; emptying one that\[aq]s set
+goes back to the default, as
+\f[B]\[aq]\[aq]\f[R] does for
+\f[B]edit\f[R].
+.PP
+\f[B]Tab\f[R] and \f[B]Enter\f[R] move
+to the next field, \f[B]Ctrl+S\f[R]
+saves and \f[B]Escape\f[R] cancels.
+Saving runs the checks \f[B]add\f[R] and
+\f[B]edit\f[R] run and saves nothing if
+any fails: each problem shows under the
+field it\[aq]s about, and one that
+belongs to no field at the top.
+After a save the list reads the
+inventories again with the cursor on the
+host, and says so when the filter hides
+it.
 .SH OPTIONS
 .PP
 .TS

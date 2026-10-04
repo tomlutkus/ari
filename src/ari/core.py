@@ -12,7 +12,7 @@ from . import storage
 from .config import STARTER, Config
 from .errors import HostsError
 from .guard import Guard, Status
-from .models import MODULE_NAME, GroupDef, Host, Inventory, now
+from .models import MODULE_NAME, GroupDef, Host, Inventory, check_port, check_token, now
 from .modules import Module, registry
 from .paths import config_file, tilde
 
@@ -514,7 +514,7 @@ def import_hosts(
     for host in result.hosts:
         problems = _shape_problems(target, host)
         if problems:
-            report.refused += problems
+            report.refused += [p.message for p in problems]
         else:
             readable.append(host)
     result.hosts = readable
@@ -579,7 +579,7 @@ def import_hosts(
             # import included, so two blocks sharing an alias can't both get in.
             problems = _host_problems(inventories, target, host, None)
             if problems:
-                report.refused += problems
+                report.refused += [p.message for p in problems]
                 continue
             if inherits_user:
                 report.warnings.append(f"{host.name}: no User in the source; the default user {target.defaults.user} will apply")
@@ -601,7 +601,7 @@ def import_hosts(
             continue
         problems = _host_problems(inventories, target, candidate, existing)
         if problems:
-            report.refused += problems
+            report.refused += [p.message for p in problems]
             continue
         candidate.last_updated = now()
         target.hosts = [candidate if h is existing else h for h in target.hosts]
@@ -649,7 +649,27 @@ class Changes:
         return self == Changes()
 
 
-def _apply(host: Host, c: Changes) -> list[str]:
+@dataclass(frozen=True)
+class Problem:
+    """Something that keeps a host from being saved, and the field it's about: one of the Changes
+    fields, or None when it has none, like a module's data rules. The TUI shows each beside its input."""
+
+    field: str | None
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+class HostRefused(HostsError):
+    """add or edit saved nothing. problems holds every reason, each with its field."""
+
+    def __init__(self, problems: list[Problem]) -> None:
+        super().__init__("nothing saved:\n  " + "\n  ".join(p.message for p in problems))
+        self.problems = problems
+
+
+def _apply(host: Host, c: Changes) -> list[Problem]:
     """Apply changes in place. Returns what couldn't be applied; the record checks come after."""
     problems = []
     if c.rename is not None:
@@ -666,12 +686,12 @@ def _apply(host: Host, c: Changes) -> list[str]:
         try:
             host.port = int(c.port) if c.port else None
         except ValueError:
-            problems.append(f"port must be an integer 1-65535, got {c.port!r}")
+            problems.append(Problem("port", f"port must be an integer 1-65535, got {c.port!r}"))
     # Removals first, so --unalias old --alias new swaps one for the other, a change of case included.
     for alias in c.unalias:
         match = next((a for a in host.aliases if a.casefold() == alias.casefold()), None)
         if match is None:
-            problems.append(f"has no alias {alias!r}")
+            problems.append(Problem("aliases", f"has no alias {alias!r}"))
         else:
             host.aliases.remove(match)
     host.aliases.extend(c.aliases)
@@ -685,7 +705,7 @@ def _apply(host: Host, c: Changes) -> list[str]:
             elif current:
                 del own[current]
             else:
-                problems.append(f"no ssh option {key} to clear")
+                problems.append(Problem("options", f"no ssh option {key} to clear"))
 
     for group, reason in c.groups:
         if group not in host.groups:
@@ -699,50 +719,72 @@ def _apply(host: Host, c: Changes) -> list[str]:
             host.groups.remove(group)
             host.reasons.pop(group, None)
         else:
-            problems.append(f"isn't in group {group!r}")
+            problems.append(Problem("groups", f"isn't in group {group!r}"))
 
     exclude = set(host.exclude) | set(c.exclude)
     for module in c.include:
         if module in exclude:
             exclude.discard(module)
         else:
-            problems.append(f"doesn't exclude {module!r}")
+            problems.append(Problem("exclude", f"doesn't exclude {module!r}"))
     host.exclude = sorted(exclude)
     return problems
 
 
-def _shape_problems(inventory: Inventory, host: Host) -> list[str]:
+def _shape_problems(inventory: Inventory, host: Host) -> list[Problem]:
     """The record on its own: the rules load enforces, and each installed module's data rules.
-    A host that fails these would make the inventory unreadable once saved."""
+    A host that fails these would make the inventory unreadable once saved. Name, hostname,
+    port and aliases are each checked on their own, so every bad field is reported at once."""
     where = f"{inventory.name} ({host.name})"
     problems = []
-    try:
-        Host.from_dict(host.to_dict(), inventory.name)
-    except HostsError as e:
-        problems.append(str(e))
+
+    def check(field: str, test, *args) -> None:
+        try:
+            test(*args)
+        except HostsError as e:
+            problems.append(Problem(field, str(e)))
+
+    # In the order load checks them, so a lone problem reads exactly as load would put it.
+    check("name", check_token, host.name, "name", inventory.name)
+    if not host.hostname or any(c.isspace() for c in host.hostname):
+        problems.append(Problem("hostname", f"{where}: hostname must be non-empty, without spaces"))
+    if host.port is not None:
+        check("port", check_port, host.port, where)
+    for alias in host.aliases:
+        check("aliases", check_token, alias, "alias", where)
+    if not problems:
+        # Everything else load enforces, from the record as it would be saved.
+        check(None, Host.from_dict, host.to_dict(), inventory.name)
+
     installed = registry().modules
     for name, data in host.modules.items():
         if name in installed:
             try:
                 installed[name].host_data(copy.deepcopy(data), f"{where}: modules.{name}")
             except HostsError as e:
-                problems.append(str(e))
-    for label, value in (("user", host.user), ("key", host.ssh_key)):
+                # ssh options are the one module field add and edit set directly.
+                problems.append(Problem("options" if name == "ssh" else None, str(e)))
+    for field_name, label, value in (("user", "user", host.user), ("ssh_key", "key", host.ssh_key)):
         if value and ("\n" in value or "\r" in value):
-            problems.append(f"{where}: {label} must be one line")
+            problems.append(Problem(field_name, f"{where}: {label} must be one line"))
     return problems
 
 
-def _host_problems(inventories: dict[str, Inventory], inventory: Inventory, host: Host, original: Host | None) -> list[str]:
+def _host_problems(
+    inventories: dict[str, Inventory], inventory: Inventory, host: Host, original: Host | None
+) -> list[Problem]:
     """Everything a host must meet before it's saved, by add, edit or import: its shape, names
     unique across all inventories, declared groups and valid reasons."""
     where = f"{inventory.name} ({host.name})"
     problems = _shape_problems(inventory, host)
 
+    def field_of(token: str) -> str:
+        return "name" if token == host.name else "aliases"
+
     seen: set[str] = set()
     for token in host.tokens():
         if token.casefold() in seen:
-            problems.append(f"{where}: {token!r} appears twice among its names")
+            problems.append(Problem("aliases", f"{where}: {token!r} appears twice among its names"))
         seen.add(token.casefold())
     owner = {
         token.casefold(): f"{inv.name}/{other.name}"
@@ -753,17 +795,17 @@ def _host_problems(inventories: dict[str, Inventory], inventory: Inventory, host
     }
     for token in host.tokens():
         if token.casefold() in owner:
-            problems.append(f"{where}: {token!r} is already used by {owner[token.casefold()]}")
-    return problems + _membership_problems(inventory, host)
+            problems.append(Problem(field_of(token), f"{where}: {token!r} is already used by {owner[token.casefold()]}"))
+    return problems + [Problem("groups", p) for p in _membership_problems(inventory, host)]
 
 
 def _write(inventories: dict[str, Inventory], inventory: Inventory, original: Host | None, host: Host, c: Changes) -> bool:
     """Apply, check, save. A host that fails any check is refused and nothing is saved."""
-    problems = [f"{inventory.name} ({host.name}): {p}" for p in _apply(host, c)]
+    problems = [Problem(p.field, f"{inventory.name} ({host.name}): {p.message}") for p in _apply(host, c)]
     _strip_defaults(inventory, host)
     problems += _host_problems(inventories, inventory, host, original)
     if problems:
-        raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+        raise HostRefused(problems)
     if original is not None and host.to_dict() == original.to_dict():
         return False
     host.last_updated = now()

@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 from rich.console import Console
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import Checkbox, DataTable, Input, Select, Static, TextArea
 
 from conftest import write_mixed
 from ari import cli, core, tui
@@ -353,6 +353,233 @@ def test_x_shows_a_guard_refusal_and_its_hint(hosts):
     app = browser()
     drive(app, script)
     assert {p: p.read_bytes() for p in (hosts / "ssh").rglob("*") if p.is_file()} == before
+
+
+def stored(home, inventory="work") -> dict:
+    return {h["name"]: h for h in json.loads((home / "config" / "ari" / f"{inventory}.json").read_text())["hosts"]}
+
+
+def fill(form, **values):
+    """Set the form's inputs as if typed: name, hostname, user, port, ssh_key, notes, aliases, options."""
+    for field, value in values.items():
+        if field == "options":
+            form.query_one("#f-options", TextArea).text = value
+        else:
+            form.query_one(f"#f-{field}", Input).value = value
+
+
+def errors(form) -> dict[str, str]:
+    """What each error line under the form's inputs says, for the ones showing."""
+    return {e.id.removeprefix("error-"): shown_text(e) for e in form.query(".error") if e.display}
+
+
+def shown_text(static) -> str:
+    content = static.content
+    return getattr(content, "plain", str(content))
+
+
+async def edit(pilot, name):
+    await find(pilot, name)
+    await pilot.press("e")
+    assert isinstance(pilot.app.screen, tui.HostForm)
+    return pilot.app.screen
+
+
+def test_a_adds_a_host_by_typing_and_lands_on_it(hosts):
+    async def script(pilot):
+        await pilot.press("a")
+        form = app.screen
+        assert isinstance(form, tui.HostForm) and form.inventory == "personal"
+        await pilot.press(*"db-01", "tab", *"192.0.2.60", "ctrl+s")
+        assert app.screen is app.hosts and app.hosts.selected()[1].name == "db-01"
+
+    app = browser()
+    drive(app, script)
+    assert stored(hosts, "personal")["db-01"]["hostname"] == "192.0.2.60"
+
+
+def test_a_puts_the_host_where_the_picker_says_with_everything_the_form_holds(hosts):
+    async def script(pilot):
+        await pilot.press("a")
+        form = app.screen
+        form.query_one("#f-inventory", Select).value = "work"
+        await pilot.pause()
+        assert form.query_one("#f-user", Input).placeholder == "deploy (default)"
+        fill(form, name="db-02", hostname="192.0.2.61", port="2200", aliases="db2 192.0.2.61",
+             notes="primary", options="ServerAliveInterval 30\nCompression=yes")
+        form.query_one("#x-ansible", Checkbox).value = True
+        await pilot.press("ctrl+s")
+        assert app.screen is app.hosts
+
+    app = browser()
+    drive(app, script)
+    host = stored(hosts)["db-02"]
+    assert host["port"] == 2200 and host["aliases"] == ["db2", "192.0.2.61"] and host["notes"] == "primary"
+    assert host["modules"]["ssh"]["options"] == {"ServerAliveInterval": "30", "Compression": "yes"}
+    assert host["exclude"] == ["ansible"] and "user" not in host
+
+
+def test_every_problem_shows_beside_its_input_and_nothing_is_saved(hosts):
+    before = work_json(hosts).read_bytes()
+
+    async def script(pilot):
+        await pilot.press("a")
+        form = app.screen
+        form.query_one("#f-inventory", Select).value = "work"
+        fill(form, name="a b", hostname="x y", port="0", aliases="c* storage", options="HostName elsewhere")
+        await pilot.press("ctrl+s")
+        assert app.screen is form
+        shown = errors(form)
+        assert set(shown) == {"name", "hostname", "port", "aliases", "options"}
+        assert "name 'a b' is not a valid ssh host name" in shown["name"]
+        assert "port must be an integer 1-65535, got 0" in shown["port"]
+        assert "alias 'c*'" in shown["aliases"] and "'storage' is already used by personal/nas" in shown["aliases"]
+        assert "HostName can't be an option" in shown["options"]
+        assert app.focused is form.query_one("#f-name", Input)
+        fill(form, name="ok-01", hostname="192.0.2.62", port="", aliases="", options="")
+        await pilot.press("ctrl+s")
+        assert app.screen is app.hosts
+
+    app = browser()
+    drive(app, script)
+    assert work_json(hosts).read_bytes() != before and "ok-01" in stored(hosts)
+
+
+def test_a_problem_with_no_input_of_its_own_shows_at_the_top(hosts):
+    data = json.loads(work_json(hosts).read_text())
+    data["hosts"][0]["groups"] = ["zone_typo"]
+    work_json(hosts).write_text(json.dumps(data))
+    before = work_json(hosts).read_bytes()
+
+    async def script(pilot):
+        form = await edit(pilot, "fw")
+        fill(form, notes="edge")
+        await pilot.press("ctrl+s")
+        assert list(errors(form)) == ["general"] and "group 'zone_typo' isn't declared" in errors(form)["general"]
+
+    drive(browser(), script)
+    assert work_json(hosts).read_bytes() == before
+
+
+def test_e_shows_the_hosts_own_values_and_the_defaults_it_inherits(hosts):
+    async def script(pilot):
+        form = await edit(pilot, "vault")
+        assert form.query_one("#f-user", Input).value == "" and form.query_one("#f-port", Input).value == ""
+        assert form.query_one("#f-user", Input).placeholder == "deploy (default)"
+        assert form.query_one("#f-port", Input).placeholder == "2222 (default)"
+        assert form.query_one("#f-ssh_key", Input).placeholder == "~/.ssh/lab-ed25519 (default)"
+        await pilot.press("escape", "escape")
+        form = await edit(pilot, "web-01")
+        assert form.query_one("#f-user", Input).value == "admin" and form.query_one("#f-port", Input).value == "22"
+        await pilot.press("escape", "escape")
+        form = await edit(pilot, "fw")
+        assert form.query_one("#x-ansible", Checkbox).value and not form.query_one("#x-ssh", Checkbox).value
+
+    drive(browser(), script)
+
+
+def test_clearing_a_field_goes_back_to_the_default(hosts):
+    async def script(pilot):
+        form = await edit(pilot, "web-01")
+        fill(form, user="", port="")
+        await pilot.press("ctrl+s")
+
+    drive(browser(), script)
+    host = stored(hosts)["web-01"]
+    assert "user" not in host and "port" not in host
+
+
+def test_e_renames_swaps_aliases_and_lands_on_the_new_name(hosts):
+    async def script(pilot):
+        form = await edit(pilot, "nas")
+        fill(form, name="nas2", aliases="STORE")
+        await pilot.press("ctrl+s")
+        await pilot.press("escape")
+        assert app.hosts.selected()[1].name == "nas2"
+
+    app = browser()
+    drive(app, script)
+    personal = stored(hosts, "personal")
+    assert "nas" not in personal and personal["nas2"]["aliases"] == ["STORE"]
+
+
+def test_e_changes_options_and_exclude_like_edit_does(hosts):
+    async def script(pilot):
+        form = await edit(pilot, "fw")
+        fill(form, options="ServerAliveInterval 30\nCompression yes")
+        form.query_one("#x-ansible", Checkbox).value = False
+        await pilot.press("ctrl+s")
+        form = await edit(pilot, "fw")
+        assert form.query_one("#f-options", TextArea).text == "ServerAliveInterval 30\nCompression yes"
+        fill(form, options="compression=no")
+        await pilot.press("ctrl+s")
+
+    drive(browser(), script)
+    host = stored(hosts)["fw"]
+    assert "exclude" not in host and host["modules"]["ssh"]["options"] == {"Compression": "no"}
+
+
+def test_the_form_reaches_the_same_record_as_ari_edit(hosts):
+    """The same change through the form and through the CLI leaves the same JSON, last_updated aside."""
+    async def script(pilot):
+        form = await edit(pilot, "vault-01")
+        fill(form, name="vault-1", user="ops", aliases="v1", notes="kept", options="Compression yes")
+        form.query_one("#x-ssh", Checkbox).value = True
+        await pilot.press("ctrl+s")
+
+    drive(browser(), script)
+    by_form = stored(hosts)["vault-1"]
+    write_mixed(hosts)
+    assert main(["edit", "vault-01", "--rename", "vault-1", "--user", "ops", "--alias", "v1", "--notes", "kept",
+                 "--opt", "Compression=yes", "--exclude", "ssh"]) == 0
+    by_cli = stored(hosts)["vault-1"]
+    assert {k: v for k, v in by_form.items() if k != "last_updated"} == {k: v for k, v in by_cli.items() if k != "last_updated"}
+
+
+@pytest.mark.parametrize("keys", [["escape"], ["ctrl+s"]])
+def test_escape_or_saving_nothing_new_writes_nothing(hosts, keys):
+    before = work_json(hosts).read_bytes()
+
+    async def script(pilot):
+        await edit(pilot, "vault")
+        await pilot.press(*keys)
+        assert app.screen is app.hosts and app.hosts.selected()[1].name == "vault-01"
+
+    app = browser()
+    drive(app, script)
+    assert work_json(hosts).read_bytes() == before
+
+
+def test_e_from_details_and_a_hidden_new_host_is_reported(hosts, monkeypatch):
+    notes = []
+    app = browser()
+    monkeypatch.setattr(app, "notify", lambda message, **kw: notes.append(message))
+
+    async def script(pilot):
+        await find(pilot, "fw")
+        await pilot.press("enter", "e")
+        assert isinstance(app.screen, tui.HostForm) and app.screen.host.name == "fw"
+        await pilot.press("escape", "a")
+        fill(app.screen, name="db-03", hostname="192.0.2.63")
+        await pilot.press("ctrl+s")
+
+    drive(app, script)
+    assert notes == ["added db-03 to personal", "the filter hides db-03"]
+
+
+@pytest.mark.parametrize(
+    "text, pairs",
+    [
+        ("Compression yes", [("Compression", "yes")]),
+        ("Compression=yes", [("Compression", "yes")]),
+        ("  Compression = yes  ", [("Compression", "yes")]),
+        ("SetEnv FOO=bar BAZ=1", [("SetEnv", "FOO=bar BAZ=1")]),
+        ("Compression", [("Compression", "")]),
+        ("a 1\n\n  \nb 2", [("a", "1"), ("b", "2")]),
+    ],
+)
+def test_options_read_the_way_ssh_config_does(text, pairs):
+    assert tui.parse_options(text) == pairs
 
 
 # The switch in ari's main(): a terminal opens the TUI, anything else gets help.

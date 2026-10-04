@@ -371,6 +371,20 @@ def test_a_stopped_export_carries_each_problem_and_prints_as_before(home):
     assert not list((home / "ssh").iterdir())
 
 
+def test_add_lists_every_bad_field_each_with_its_field(home, capsys):
+    write_mixed(home)
+    assert run("-i", "work", "add", "a b", "x y", "--port", "0", "--alias", "c*") == 1
+    assert capsys.readouterr().err.splitlines()[1:] == [
+        "  work: name 'a b' is not a valid ssh host name",
+        "  work (a b): hostname must be non-empty, without spaces",
+        "  work (a b): port must be an integer 1-65535, got 0",
+        "  work (a b): alias 'c*' is not a valid ssh host name",
+    ]
+    with pytest.raises(core.HostRefused) as e:
+        core.edit_host(load_config(), "fw", core.Changes(port="x", unalias=["nope"], include=["ssh"], ungroup=["g"]))
+    assert [p.field for p in e.value.problems] == ["port", "aliases", "groups", "exclude"]
+
+
 def test_exclude_keeps_a_host_out_of_that_module(personal, tmp_path):
     run("import", "ssh", str(FIXTURES / "personal.conf"))
     side = tmp_path / "side.conf"
