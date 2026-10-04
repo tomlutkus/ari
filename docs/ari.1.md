@@ -175,7 +175,7 @@ The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and 
 | **/** | In the list, move to the filter. Letters typed there go into the filter, never to the keys below |
 | **Enter** | In the filter, back to the list. In the list, the selected host's details, as **show** prints them. In an export report, back to the list |
 | **Escape** | In the list or the filter, clear the filter. In a host's details or an export report, back to the list. In the form, the group picker or the delete prompt, back without saving |
-| **s** | In the list or a host's details, **ssh** to that host. The TUI hands the terminal to ssh and comes back when the session ends; if ssh fails to connect (exit 255), the TUI says so once it's back |
+| **s** | In the list or a host's details, **ssh** to that host. The TUI hands the terminal to ssh and comes back when the session ends; if ssh fails to connect (exit 255), the TUI says so once it's back. A host the ssh column doesn't mark ✓ has no block in the ssh config ari writes, so ssh would go wherever DNS sends its name: the TUI says why and doesn't run ssh |
 | **a** | In the list, add a host in the form below |
 | **e** | In the list or a host's details, edit that host in the same form, filled with its own values |
 | **g** | In the list or a host's details, that host's groups, in the picker below |

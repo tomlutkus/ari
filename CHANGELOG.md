@@ -14,6 +14,7 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 - `export` creates a missing directory 0755 when the files it holds are meant for others, like the Ansible inventory, and 0700 when they are private. It used to make every new directory 0700, which kept the 0644 Ansible files from everyone else. A directory that exists keeps its mode.
 - `export` writes every file beside its target before renaming any into place. A write that fails, on a full disk say, now leaves every target and the guard as they were. Before, the files written ahead of it stayed while the guard missed them, and the next export refused them as edited by hand.
 - An inventory file whose ssh options hold one keyword twice in different case no longer loads, and `export` refuses a host with an alias that is its own name in another case. Both can only come from editing the file by hand.
+- In the TUI, `s` runs ssh only for a host the ssh column marks `✓`. For a host that excludes ssh, or whose inventory has the ssh module off, ari writes no ssh block, so `ssh NAME` would have gone wherever DNS sends that name; the TUI now says why and doesn't run it.
 
 ## 0.6.0 (2026-10-04)
 

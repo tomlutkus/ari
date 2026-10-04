@@ -7,7 +7,7 @@ import pytest
 from rich.console import Console
 from textual.widgets import Checkbox, DataTable, Input, Select, SelectionList, Static, TextArea
 
-from conftest import write_mixed
+from conftest import MIXED, write_config, write_mixed
 from ari import cli, core, tui
 from ari.cli import main
 from ari.config import load_config
@@ -181,6 +181,31 @@ def test_without_a_terminal_to_suspend_ssh_never_runs(hosts, monkeypatch):
     monkeypatch.setattr(app, "notify", lambda message, **kw: notes.append(message))
     drive(app, lambda pilot: pilot.press("s"))
     assert notes == ["this terminal can't hand over to ssh"]
+
+
+@pytest.mark.parametrize("on", ["list", "details"])
+def test_s_refuses_a_host_the_ssh_module_doesnt_write(hosts, ssh, monkeypatch, on):
+    """ssh scratch would fall through to DNS: scratch excludes ssh, and work's ssh module is parked."""
+    write_config(hosts, MIXED.replace('path = "SSH/20-work.conf"', 'path = "SSH/20-work.conf"\nenabled = false'))
+    notes = []
+    app = browser()
+    monkeypatch.setattr(app, "notify", lambda message, **kw: notes.append((message, kw.get("severity"))))
+    keys = ["s"] if on == "list" else ["enter", "s"]
+
+    async def script(pilot):
+        for name in ("scratch", "fw", "nas"):
+            await find(pilot, name)
+            await pilot.press(*keys)
+            if on == "details":
+                await pilot.press("escape")
+            await pilot.press("escape")
+
+    drive(app, script)
+    assert notes == [
+        ("scratch isn't in the ssh config ari writes (it excludes ssh), so ssh scratch would go wherever DNS says", "warning"),
+        ("fw isn't in the ssh config ari writes (work has the ssh module off), so ssh fw would go wherever DNS says", "warning"),
+    ]
+    assert ssh == [["ssh", "nas"]]
 
 
 def test_s_and_enter_do_nothing_when_no_host_matches(hosts, monkeypatch):

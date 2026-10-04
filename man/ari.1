@@ -724,7 +724,12 @@ In the list or a host\[aq]s details,
 The TUI hands the terminal to ssh and
 comes back when the session ends; if ssh
 fails to connect (exit 255), the TUI
-says so once it\[aq]s back
+says so once it\[aq]s back.
+A host the ssh column doesn\[aq]t mark ✓
+has no block in the ssh config ari
+writes, so ssh would go wherever DNS
+sends its name: the TUI says why and
+doesn\[aq]t run ssh
 T}
 T{
 \f[B]a\f[R]

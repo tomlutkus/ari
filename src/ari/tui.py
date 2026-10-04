@@ -96,7 +96,7 @@ class Details(Screen):
         yield Footer()
 
     def action_ssh(self) -> None:
-        self.app.ssh(self.row[1].name)
+        self.app.ssh(self.row)
 
     def action_edit(self) -> None:
         # The list's cursor is still on this host, so the list opens the form and reloads after it.
@@ -519,7 +519,7 @@ class HostList(Screen):
     def action_ssh(self) -> None:
         row = self.selected()
         if row:
-            self.app.ssh(row[1].name)
+            self.app.ssh(row)
 
     def _saved(self, name: str | None) -> None:
         """After a form or the picker saves: read the inventories again, with the cursor on the host."""
@@ -634,8 +634,16 @@ class Browser(App):
     def get_default_screen(self) -> Screen:
         return self.hosts
 
-    def ssh(self, name: str) -> None:
-        """Hand the terminal to ssh, and take it back when the session ends."""
+    def ssh(self, row: Row) -> None:
+        """Hand the terminal to ssh, and take it back when the session ends. Only for a host the ssh
+        module writes: for any other, ssh <name> would go wherever DNS sends that name."""
+        inventory, host = row
+        name = host.name
+        reach = core.module_reach(self.hosts.cfg, inventory, host, "ssh")
+        if reach is not core.ModuleReach.WRITTEN:
+            why = "it excludes ssh" if reach is core.ModuleReach.EXCLUDED else f"{inventory.name} has the ssh module off"
+            self.notify(f"{name} isn't in the ssh config ari writes ({why}), so ssh {name} would go wherever DNS says", severity="warning")
+            return
         try:
             with self.suspend():
                 code = subprocess.run(["ssh", name]).returncode
