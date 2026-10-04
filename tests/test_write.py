@@ -173,6 +173,20 @@ def test_edit_can_change_the_case_of_its_own_name(imported):
     assert stored(imported, "NAS")["hostname"] == "192.0.2.254"
 
 
+def test_unalias_drops_aliases_and_the_host_line_follows(imported):
+    assert run("edit", "nas", "--unalias", "STORAGE", "--unalias", "192.0.2.254") == 0
+    assert "aliases" not in stored(imported, "nas")
+    run("export")
+    assert "Host nas\n" in (imported / "ssh" / "10-personal.conf").read_text()
+
+
+def test_unalias_runs_before_alias(imported):
+    assert run("edit", "storage", "--unalias", "storage", "--alias", "files") == 0
+    assert stored(imported, "nas")["aliases"] == ["192.0.2.254", "files"]
+    assert run("edit", "nas", "--unalias", "files", "--alias", "Files") == 0
+    assert stored(imported, "nas")["aliases"] == ["192.0.2.254", "Files"]
+
+
 def test_edit_groups_and_reasons(imported, capsys):
     declare_groups(imported, GROUPS)
     assert run("edit", "vps", "--group", "backups", "--group", "no_auto_update:remote") == 0
@@ -212,6 +226,9 @@ def test_exclude_and_include(imported):
     [
         (["edit", "vps", "--ungroup", "backups"], "isn't in group 'backups'"),
         (["edit", "vps", "--include", "ansible"], "doesn't exclude 'ansible'"),
+        (["edit", "vps", "--unalias", "vps"], "has no alias 'vps'"),
+        (["edit", "vps", "--unalias", "storage"], "has no alias 'storage'"),
+        (["edit", "nas", "--unalias", "storage", "--unalias", "storage"], "has no alias 'storage'"),
         (["edit", "vps", "--opt", "Compression="], "no ssh option Compression to clear"),
         (["edit", "vps", "--hostname", ""], "hostname must be non-empty"),
         (["edit", "vps", "--hostname", "198.51.100.1 x"], "without spaces"),

@@ -415,6 +415,7 @@ class Changes:
     ssh_key: str | None = None
     notes: str | None = None
     aliases: list[str] = field(default_factory=list)
+    unalias: list[str] = field(default_factory=list)
     options: list[tuple[str, str]] = field(default_factory=list)
     groups: list[tuple[str, str | None]] = field(default_factory=list)
     ungroup: list[str] = field(default_factory=list)
@@ -443,6 +444,13 @@ def _apply(host: Host, c: Changes) -> list[str]:
             host.port = int(c.port) if c.port else None
         except ValueError:
             problems.append(f"port must be an integer 1-65535, got {c.port!r}")
+    # Removals first, so --unalias old --alias new swaps one for the other, a change of case included.
+    for alias in c.unalias:
+        match = next((a for a in host.aliases if a.casefold() == alias.casefold()), None)
+        if match is None:
+            problems.append(f"has no alias {alias!r}")
+        else:
+            host.aliases.remove(match)
     host.aliases.extend(c.aliases)
 
     if c.options:
@@ -548,8 +556,8 @@ def add_host(cfg: Config, inventory_name: str, name: str, hostname: str, changes
     for flag, used in (("--rename", changes.rename), ("--hostname", changes.hostname)):
         if used is not None:
             raise HostsError(f"{flag} is for edit; add takes the name and hostname as arguments")
-    if changes.ungroup or changes.include:
-        raise HostsError("--ungroup and --include are for edit")
+    if changes.ungroup or changes.unalias or changes.include:
+        raise HostsError("--ungroup, --unalias and --include are for edit")
     inventories = load_all(cfg)
     inventory = inventories[cfg.get(inventory_name).name]
     host = Host(name=name, hostname=hostname)

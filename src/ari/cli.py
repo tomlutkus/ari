@@ -110,6 +110,7 @@ def _changes(args: argparse.Namespace) -> core.Changes:
         ssh_key=args.key,
         notes=args.notes,
         aliases=args.alias,
+        unalias=getattr(args, "unalias", []),
         options=args.opt,
         groups=args.group,
         ungroup=getattr(args, "ungroup", []),
@@ -270,6 +271,7 @@ def _host_options(p: argparse.ArgumentParser, edit: bool) -> None:
     if edit:
         p.add_argument("--hostname", metavar="HOSTNAME", dest="new_hostname", help="new address")
         p.add_argument("--rename", metavar="NAME", dest="new_name", help="new name")
+        p.add_argument("--unalias", metavar="ALIAS", action="append", default=[], help="drop an alias; repeatable")
         p.add_argument("--ungroup", metavar="GROUP", action="append", default=[], help="leave a group; repeatable")
         p.add_argument("--include", metavar="MODULE", action="append", default=[], help="undo an --exclude; repeatable")
 

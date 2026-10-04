@@ -100,10 +100,11 @@ Change a host, found by name or alias. **-i** narrows the search to one inventor
 |-------|-------------|
 | **--hostname** *HOSTNAME* | New address |
 | **--rename** *NAME* | New name |
+| **--unalias** *ALIAS* | Drop an alias, matched case-insensitively; repeatable |
 | **--ungroup** *GROUP* | Leave a group, and its reason with it; repeatable |
 | **--include** *MODULE* | Undo an **--exclude**; repeatable |
 
-An empty value clears a field: **--user ''**, **--port ''** and **--key ''** go back to the inventory default, **--notes ''** empties the notes, and **--opt** *KEY*= removes that option. **--group** sets membership exactly as given, so naming a group the host is already in without a reason drops its reason. **--ungroup** a group the host isn't in, **--include** a module it doesn't exclude, and clearing an option it doesn't have are errors, not silent no-ops. An edit that changes nothing saves nothing.
+An empty value clears a field: **--user ''**, **--port ''** and **--key ''** go back to the inventory default, **--notes ''** empties the notes, and **--opt** *KEY*= removes that option. **--group** sets membership exactly as given, so naming a group the host is already in without a reason drops its reason. **--unalias** runs before **--alias**, so **--unalias** *OLD* **--alias** *NEW* swaps one alias for another, a change of case included. **--ungroup** a group the host isn't in, **--unalias** a name that isn't one of its aliases, **--include** a module it doesn't exclude, and clearing an option it doesn't have are errors, not silent no-ops. An edit that changes nothing saves nothing.
 
 ## rm *NAME*
 

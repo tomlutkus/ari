@@ -268,6 +268,12 @@ T}@T{
 New name
 T}
 T{
+\f[B]--unalias\f[R] \f[I]ALIAS\f[R]
+T}@T{
+Drop an alias, matched
+case-insensitively; repeatable
+T}
+T{
 \f[B]--ungroup\f[R] \f[I]GROUP\f[R]
 T}@T{
 Leave a group, and its reason with it;
@@ -291,11 +297,19 @@ empties the notes, and \f[B]--opt\f[R]
 exactly as given, so naming a group the
 host is already in without a reason
 drops its reason.
+\f[B]--unalias\f[R] runs before
+\f[B]--alias\f[R], so
+\f[B]--unalias\f[R] \f[I]OLD\f[R]
+\f[B]--alias\f[R] \f[I]NEW\f[R] swaps
+one alias for another, a change of case
+included.
 \f[B]--ungroup\f[R] a group the host
-isn\[aq]t in, \f[B]--include\f[R] a
-module it doesn\[aq]t exclude, and
-clearing an option it doesn\[aq]t have
-are errors, not silent no-ops.
+isn\[aq]t in, \f[B]--unalias\f[R] a name
+that isn\[aq]t one of its aliases,
+\f[B]--include\f[R] a module it
+doesn\[aq]t exclude, and clearing an
+option it doesn\[aq]t have are errors,
+not silent no-ops.
 An edit that changes nothing saves
 nothing.
 .SS rm \f[I]NAME\f[R]
