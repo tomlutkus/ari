@@ -2,7 +2,7 @@
 title: ARI
 section: 1
 header: User Commands
-footer: ari 0.4.1
+footer: ari 0.5.0
 date: October 2026
 ---
 
@@ -150,7 +150,7 @@ A clean import adopts the files it read: their hashes go to the guard, so export
 
 With the **ssh** module, *SOURCE* is a config file. The first token on a Host line becomes the name and the rest become aliases. **HostName**, **User**, **Port** and **IdentityFile** become fields, and every other keyword is kept as an ssh option, in order. Export writes **IdentitiesOnly yes** after a key unless the host sets IdentitiesOnly itself, so a block with a key and no IdentitiesOnly is stored with **IdentitiesOnly no**, which is what ssh did with it. Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, ssh uses the first value and so does ari, except for **IdentityFile**, **CertificateFile**, **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv**: ssh uses every one of those, ari keeps the first and warns. A block without **User** stays without one, so ssh uses whoever connects. Point **ssh.path** only at a file ari owns: an Include, Match or `Host *` in it would be gone after the next export.
 
-With the **ansible** module, *SOURCE* is an inventory directory, and every **.yml** and **.yaml** file at its top level is read. **all.vars** become the defaults, each host's **ansible_host**, **ansible_user**, **ansible_port**, **ansible_ssh_private_key_file** and **description** become its fields, and group membership, child groups and the file each group came from carry over. Anything else is reported as not imported: other vars, group vars, and members that no hosts section defines. Comments are read by nothing and listed with their file and line, so zone headers and reasons can be filled in by hand. When the inventory has no **ansible** table yet, import prints one to paste into config.toml, with each file's groups listed by name.
+With the **ansible** module, *SOURCE* is an inventory directory, and every **.yml** and **.yaml** file at its top level is read. **all.vars** become the defaults, each host's **ansible_host**, **ansible_user**, **ansible_port**, **ansible_ssh_private_key_file** and **description** become its fields, and group membership, child groups and the file each group came from carry over. Anything else is reported as not imported: other vars, group vars, and members that no hosts section defines. Comments are read by nothing and listed with their file and line, so zone headers and reasons can be put back with **ari group**. When the inventory has no **ansible** table yet, import prints one to paste into config.toml, with each file's groups listed by name.
 
 ## export [*MODULE* ...]
 
@@ -273,6 +273,8 @@ A file that fails to parse stops **ari** with the path and the error. It is neve
 
 **add** and **edit** check the host they write and save nothing if any check fails, listing every problem at once: the name and aliases are valid ssh host names and unique across all inventories, the hostname has no spaces, the port is 1-65535, every group is declared, every reason is one its group declares, and each installed module accepts the host's data. ssh options can't repeat a keyword the host has a field for, like **User** or **Port**.
 
+**group** checks the group it writes the same way: a new name is usable, every child is declared, children form no cycle, and nothing a host relies on is removed. Only problems the write would add stop it; one already elsewhere in the inventory doesn't.
+
 **export** checks every inventory it covers before writing anything. Beyond names, groups and reasons, every child group must be declared and children may not form a cycle. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table, and, when **zones** is set, every host it exports is in exactly one zone.
 
 # GENERATED SSH CONFIG
@@ -295,7 +297,7 @@ The files get mode 0644, so anyone who runs playbooks from the repository can re
 
 | File | Contents |
 |-------|-------------|
-| `config.toml` | Inventories and their modules |
+| `config.toml` | Inventories and their modules; **ari init** writes a starter |
 | `NAME.json` | Inventory data, one file per inventory |
 | `exports.json` | Hashes of exported files, for the guard |
 

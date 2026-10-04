@@ -2,7 +2,7 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
-## Unreleased
+## 0.5.0 (2026-10-04)
 
 - `ari init` writes a commented starter `config.toml` and prints where it went. It refuses when one exists, whatever it holds, and is the only time ari writes that file. `--help`, `--version` and `ari modules` run without a config.
 - `edit --unalias ALIAS`, repeatable, drops an alias. It runs before `--alias`, so `--unalias old --alias new` swaps one for the other. Naming an alias the host doesn't have is an error.

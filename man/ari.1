@@ -15,7 +15,7 @@
 . ftr VB CB
 . ftr VBI CBI
 .\}
-.TH "ARI" "1" "October 2026" "ari 0.4.1" "User Commands"
+.TH "ARI" "1" "October 2026" "ari 0.5.0" "User Commands"
 .hy
 .SH NAME
 .PP
@@ -546,8 +546,8 @@ imported: other vars, group vars, and
 members that no hosts section defines.
 Comments are read by nothing and listed
 with their file and line, so zone
-headers and reasons can be filled in by
-hand.
+headers and reasons can be put back with
+\f[B]ari group\f[R].
 When the inventory has no
 \f[B]ansible\f[R] table yet, import
 prints one to paste into config.toml,
@@ -910,6 +910,15 @@ ssh options can\[aq]t repeat a keyword
 the host has a field for, like
 \f[B]User\f[R] or \f[B]Port\f[R].
 .PP
+\f[B]group\f[R] checks the group it
+writes the same way: a new name is
+usable, every child is declared,
+children form no cycle, and nothing a
+host relies on is removed.
+Only problems the write would add stop
+it; one already elsewhere in the
+inventory doesn\[aq]t.
+.PP
 \f[B]export\f[R] checks every inventory
 it covers before writing anything.
 Beyond names, groups and reasons, every
@@ -1010,7 +1019,8 @@ _
 T{
 \f[V]config.toml\f[R]
 T}@T{
-Inventories and their modules
+Inventories and their modules; \f[B]ari
+init\f[R] writes a starter
 T}
 T{
 \f[V]NAME.json\f[R]

@@ -84,7 +84,7 @@ all:
 
 ssh resolves every generated file in one namespace where the first match wins, so a duplicate name would silently shadow a host. ari refuses any name or alias already in use, on every add, edit and import.
 
-Group membership lives on the host record. Removing a host removes it from every group, no group can list a host that doesn't exist, and a group has to be declared before a host can join it, so a typo fails instead of creating one. Before writing Ansible, ari checks that every host sits in exactly one zone and every group goes to exactly one file. Any failure writes nothing and lists every problem at once.
+Group membership lives on the host record. Removing a host removes it from every group, no group can list a host that doesn't exist, and a group has to be declared before a host can join it, so a typo fails instead of creating one. The reverse holds too: a group, a child or a reason that hosts still rely on can't be removed, and the refusal names them. Before writing Ansible, ari checks that every host sits in exactly one zone and every group goes to exactly one file. Any failure writes nothing and lists every problem at once.
 
 Generated files are output. ari records a hash of everything it writes and won't overwrite a file that was edited by hand since, unless you pass `--force` after looking at it. Importing a file adopts it for the guard only when the inventory now holds all of it: a conflict, a refused host, or anything ari couldn't represent leaves the file alone until you've checked it. Writes go to a temp file and get renamed into place, and `Include config.d/*.conf` never matches the temp name, so ssh never reads half a file.
 
@@ -111,6 +111,8 @@ $ ari modules
 - [x] Formats as modules you switch on per inventory
 - [x] Ansible inventory import and export, byte for byte stable
 - [x] `make install`, `make man` and `make check`
+- [x] `ari init` writes a starter config
+- [x] `ari group` declares, changes and removes groups
 - [ ] TUI, with a key that drops you straight into ssh
 
 ## Install
@@ -137,14 +139,14 @@ $ make install
    Include config.d/*.conf
    ```
 
-2. Declare your inventories in `~/.config/ari/config.toml`:
+2. Write a starter config, then adjust `~/.config/ari/config.toml` if your paths differ:
 
-   ```toml
-   default = "personal"
-
-   [inventories.personal.ssh]
-   path = "~/.ssh/config.d/10-personal.conf"
+   ```console
+   $ ari init
+   wrote ~/.config/ari/config.toml
    ```
+
+   It declares one inventory, *personal*, written to `~/.ssh/config.d/10-personal.conf`, and carries a commented *work* inventory with an Ansible table to adapt. After this, ari only reads it.
 
 3. Import the file ari will take over, then export it back:
 
@@ -155,7 +157,7 @@ $ make install
 
 To prove nothing changed, compare `ssh -G <host>` before and after.
 
-An Ansible inventory comes in the same way. `ari import ansible DIR` reads the directory and prints the `ansible` table to add to `config.toml`. Comments don't survive pyyaml, so import lists each one with its file and line for you to put back by hand, and `ansible-inventory --list` before and after proves Ansible sees the same inventory.
+An Ansible inventory comes in the same way. `ari import ansible DIR` reads the directory and prints the `ansible` table to add to `config.toml`. Comments don't survive pyyaml, so import lists each one with its file and line, and `ari group` puts zone headers and reasons back with `--description` and `--reason`. `ansible-inventory --list` before and after proves Ansible sees the same inventory.
 
 ## Files
 
