@@ -28,6 +28,8 @@ inventory from them
 \f[I]INV\f[R]] \f[I]COMMAND\f[R]
 [\f[I]ARGS\f[R]]
 .PP
+\f[B]ari init\f[R]
+.PP
 \f[B]ari ls\f[R] [\f[B]--search\f[R]
 \f[I]TEXT\f[R]] [\f[B]--group\f[R]
 \f[I]GROUP\f[R]]
@@ -118,6 +120,19 @@ Judges 14:8 (KJV)
 .PP
 Out of the strong came forth sweetness.
 .SH COMMANDS
+.SS init
+.PP
+Write a starter \f[B]config.toml\f[R]
+and print where it went.
+The starter declares one inventory,
+\f[I]personal\f[R], with the
+\f[B]ssh\f[R] module on, and carries a
+second, \f[I]work\f[R], commented out
+with an \f[B]ansible\f[R] table to
+adapt.
+When config.toml exists, whatever it
+holds, \f[B]init\f[R] refuses and leaves
+it alone.
 .SS ls
 .PP
 List hosts across every inventory, or
@@ -296,6 +311,8 @@ can import and export, and which
 inventories switch it on.
 Modules that failed to load are listed
 with the reason.
+Without config.toml it still lists the
+modules, with no inventories.
 .SS import \f[I]MODULE\f[R] [\f[I]SOURCE\f[R]]
 .PP
 Read hosts into one inventory through
@@ -491,8 +508,12 @@ error.
 \f[B]config.toml\f[R] declares the
 inventories and the modules each one
 uses, one table per module.
-\f[B]ari\f[R] reads it and never writes
-it.
+\f[B]ari init\f[R] writes a starter when
+there\[aq]s none; after that
+\f[B]ari\f[R] only reads it.
+Only \f[B]init\f[R], \f[B]modules\f[R],
+\f[B]--help\f[R] and \f[B]--version\f[R]
+run without it.
 .IP
 .nf
 \f[C]

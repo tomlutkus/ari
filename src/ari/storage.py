@@ -12,8 +12,9 @@ from .modules import check_data
 from .paths import tilde
 
 
-def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
-    """Write beside the target, then rename over it: readers see the old file or the new one, never half."""
+def atomic_write(path: Path, data: bytes, mode: int = 0o600, exclusive: bool = False) -> None:
+    """Write beside the target, then rename over it: readers see the old file or the new one, never half.
+    exclusive links the file into place instead, so an existing target raises FileExistsError untouched."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = path.with_name(path.name + ".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
@@ -23,7 +24,11 @@ def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        if exclusive:
+            os.link(tmp, path)
+            tmp.unlink()
+        else:
+            os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

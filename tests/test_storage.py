@@ -18,6 +18,15 @@ def test_missing_file_is_an_empty_inventory(tmp_path):
     assert inventory.hosts == [] and inventory.name == "personal"
 
 
+def test_exclusive_write_never_replaces(tmp_path):
+    path = tmp_path / "config.toml"
+    storage.atomic_write(path, b"first", exclusive=True)
+    with pytest.raises(FileExistsError):
+        storage.atomic_write(path, b"second", exclusive=True)
+    assert path.read_bytes() == b"first"
+    assert not (tmp_path / "config.toml.tmp").exists()
+
+
 def test_round_trip_sorts_and_protects(tmp_path):
     inventory = Inventory("personal", tmp_path / "personal.json")
     inventory.hosts = [Host("vps", "198.51.100.1"), Host("Alpha", "192.0.2.1", port=2222)]

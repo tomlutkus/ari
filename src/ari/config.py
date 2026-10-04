@@ -10,13 +10,41 @@ from typing import Any
 
 from .errors import HostsError
 from .modules import Module, registry
-from .paths import config_dir, tilde
+from .paths import config_file, tilde
 
-SAMPLE = """\
+# What ari init writes: a working config with one inventory, and a second one to uncomment.
+STARTER = """\
+# ari configuration: which inventories exist and which modules each one uses.
+# ari init wrote this once. From here on it's yours: ari reads it and never writes it.
+# Every key is documented under CONFIGURATION in ari(1).
+
+# Inventory for add and import when neither -i nor ARI_INVENTORY names one.
 default = "personal"
 
+# One table per module per inventory; a table present turns that module on.
+# The hosts go in personal.json beside this file, created by the first add or import.
 [inventories.personal.ssh]
+# Generated ssh config. Pull it into ssh with one line in ~/.ssh/config,
+# placed before any Host block: Include config.d/*.conf
 path = "~/.ssh/config.d/10-personal.conf"
+
+# A second inventory, with its data kept elsewhere and an Ansible export.
+# Uncomment and adjust.
+#
+# [inventories.work]
+# file = "~/work/infra/ari/work.json"
+#
+# [inventories.work.ssh]
+# path = "~/.ssh/config.d/20-work.conf"
+#
+# [inventories.work.ansible]
+# dir = "~/work/infra/ansible/inventory"
+# zones = "zone_*"
+# enabled = false  # parks the module and keeps its settings
+#
+# [inventories.work.ansible.groups]
+# "10-zones.yml" = ["zone_*"]
+# "40-roles.yml" = ["role_*"]
 """
 
 _INVENTORY_NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -78,10 +106,13 @@ def _module_config(key: str, table: dict[str, Any], where: str) -> ModuleConfig 
     return ModuleConfig(module, enabled, module.settings(table, where))
 
 
-def load_config(path: Path | None = None) -> Config:
-    path = path or config_dir() / "config.toml"
+def load_config(path: Path | None = None, missing_ok: bool = False) -> Config:
+    """missing_ok gives a config with no inventories when there's no file, for commands that need none."""
+    path = path or config_file()
     if not path.exists():
-        raise HostsError(f"no config at {tilde(path)}; create it, for example:\n\n{SAMPLE}")
+        if missing_ok:
+            return Config(path, {})
+        raise HostsError(f"no config at {tilde(path)}; ari init writes a starter")
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as e:

@@ -1,5 +1,7 @@
 import json
+import re
 import shutil
+import stat
 import subprocess
 
 import pytest
@@ -7,7 +9,7 @@ import pytest
 from conftest import FIXTURES, PERSONAL_ONLY, copy_fixture, write_config
 from ari import core
 from ari.cli import main
-from ari.config import load_config
+from ari.config import STARTER, load_config
 from ari.modules import registry
 from ari.modules.ssh import SshModule
 
@@ -27,7 +29,51 @@ def test_no_arguments_prints_help(capsys):
 
 def test_missing_config_explains_itself(home, capsys):
     assert run("ls") == 1
-    assert "no config at" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "no config at" in err and "ari init" in err
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["--version"], ["ls", "--help"], ["init", "--help"]])
+def test_help_and_version_need_no_config(home, capsys, argv):
+    with pytest.raises(SystemExit) as e:
+        run(*argv)
+    assert e.value.code == 0
+    assert capsys.readouterr().out
+
+
+def test_modules_needs_no_config(home, capsys):
+    assert run("modules") == 0
+    captured = capsys.readouterr()
+    assert "ssh" in captured.out and "ansible" in captured.out
+    assert "ari init" in captured.err
+
+
+def test_init_writes_a_working_starter_once(home, capsys):
+    path = home / "config" / "ari" / "config.toml"
+    assert run("init") == 0
+    assert str(path) in capsys.readouterr().out
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    cfg = load_config()
+    assert cfg.default == "personal"
+    assert [m.module.name for m in cfg.get("personal").enabled()] == ["ssh"]
+    starter = path.read_bytes()
+    assert run("init") == 1
+    assert "already exists" in capsys.readouterr().err
+    assert path.read_bytes() == starter
+
+
+def test_init_leaves_any_existing_config_alone(home, capsys):
+    path = write_config(home, "not toml at all [")
+    assert run("init") == 1
+    assert path.read_text() == "not toml at all ["
+    assert not path.with_name("config.toml.tmp").exists()
+
+
+def test_starter_examples_load_once_uncommented(home):
+    write_config(home, re.sub(r"(?m)^# (?=\[|\S+ = )", "", STARTER))
+    cfg = load_config()
+    assert list(cfg.inventories) == ["personal", "work"]
+    assert set(cfg.get("work").modules) == {"ssh", "ansible"}
 
 
 def test_import_infers_defaults_and_stores_only_differences(personal, capsys):

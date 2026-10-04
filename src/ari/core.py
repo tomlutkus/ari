@@ -6,12 +6,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import storage
-from .config import Config
+from .config import STARTER, Config
 from .errors import HostsError
 from .guard import Guard, Status
 from .models import MODULE_NAME, Host, Inventory, now
 from .modules import Module, registry
-from .paths import tilde
+from .paths import config_file, tilde
+
+
+def init_config(path: Path | None = None) -> Path:
+    """Write the starter config.toml. The only write ari ever makes to it, and only when there's none."""
+    path = path or config_file()
+    try:
+        storage.atomic_write(path, STARTER.encode("utf-8"), exclusive=True)
+    except FileExistsError:
+        raise HostsError(f"{tilde(path)} already exists; ari init never overwrites it") from None
+    return path
 
 
 def load_all(cfg: Config) -> dict[str, Inventory]:

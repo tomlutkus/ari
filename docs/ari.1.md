@@ -14,6 +14,8 @@ ari - keep SSH hosts in one place and generate ssh config and Ansible inventory 
 
 **ari** [**-i** *INV*] *COMMAND* [*ARGS*]
 
+**ari init**
+
 **ari ls** [**--search** *TEXT*] [**--group** *GROUP*]
 
 **ari show** *NAME*
@@ -57,6 +59,10 @@ In Hebrew, ari means lion. When Samson came back to the lion he had killed, he f
 Out of the strong came forth sweetness.
 
 # COMMANDS
+
+## init
+
+Write a starter **config.toml** and print where it went. The starter declares one inventory, *personal*, with the **ssh** module on, and carries a second, *work*, commented out with an **ansible** table to adapt. When config.toml exists, whatever it holds, **init** refuses and leaves it alone.
 
 ## ls
 
@@ -105,7 +111,7 @@ Remove a host, found by name or alias, from whichever inventory holds it. **-i**
 
 ## modules
 
-List the installed modules, whether each can import and export, and which inventories switch it on. Modules that failed to load are listed with the reason.
+List the installed modules, whether each can import and export, and which inventories switch it on. Modules that failed to load are listed with the reason. Without config.toml it still lists the modules, with no inventories.
 
 ## import *MODULE* [*SOURCE*]
 
@@ -143,7 +149,7 @@ Write the output of every enabled module of every inventory, or only the named m
 
 # CONFIGURATION
 
-**config.toml** declares the inventories and the modules each one uses, one table per module. **ari** reads it and never writes it.
+**config.toml** declares the inventories and the modules each one uses, one table per module. **ari init** writes a starter when there's none; after that **ari** only reads it. Only **init**, **modules**, **--help** and **--version** run without it.
 
 ```toml
 default = "personal"

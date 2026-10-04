@@ -137,6 +137,11 @@ def cmd_rm(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    out.print(f"wrote {tilde(core.init_config())}", soft_wrap=True)
+    return 0
+
+
 def cmd_modules(cfg: Config, args: argparse.Namespace) -> int:
     rows, failures = core.module_status(cfg)
     table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
@@ -158,6 +163,8 @@ def cmd_modules(cfg: Config, args: argparse.Namespace) -> int:
     out.print(table)
     for name, reason in failures.items():
         _note("failed", "red", f"{name}: {reason}")
+    if not cfg.inventories:
+        _note("note", "dim", f"no config at {tilde(cfg.path)}; ari init writes a starter")
     return 0
 
 
@@ -280,6 +287,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
+    init = sub.add_parser("init", help="write a starter config.toml, only if there's none")
+    init.set_defaults(func=cmd_init)
+
     ls = sub.add_parser("ls", parents=[common], help="list hosts across inventories")
     ls.add_argument(
         "--search", metavar="TEXT", help="match any field, effective user, port and key included; case-insensitive"
@@ -333,7 +343,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
-        return args.func(load_config(), args)
+        # init writes the config and modules lists what's installed, so neither needs one.
+        if args.func is cmd_init:
+            return cmd_init(args)
+        return args.func(load_config(missing_ok=args.func is cmd_modules), args)
     except HostsError as e:
         _note("error", "bold red", str(e))
         return 1

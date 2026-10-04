@@ -10,6 +10,10 @@ def config_dir() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser() / APP
 
 
+def config_file() -> Path:
+    return config_dir() / "config.toml"
+
+
 def state_dir() -> Path:
     return Path(os.environ.get("XDG_STATE_HOME") or "~/.local/state").expanduser() / APP
 
