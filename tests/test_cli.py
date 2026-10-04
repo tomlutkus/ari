@@ -279,6 +279,23 @@ def test_ls_has_a_column_per_exporting_module(home, monkeypatch, capsys):
     assert list(ls_columns(capsys.readouterr().out)["nas"]) == ["NAME", "HOSTNAME", "USER", "PORT", "SSH", "GROUPS", "INV"]
 
 
+@pytest.mark.parametrize("width", [40, 80])
+def test_ls_never_cuts_a_name_or_an_address(home, monkeypatch, capsys, width):
+    """When the fixed columns alone are wider than the terminal, rows run past it whole."""
+    write_mixed(home)
+    assert run("-i", "work", "add", "longhost", "backup-target-01.storage.example.net", "--group", "zone_app") == 0
+    capsys.readouterr()
+    monkeypatch.setattr(cli, "out", Console(width=width, highlight=False))
+    assert run("ls") == 0
+    lines = capsys.readouterr().out.splitlines()
+    rows = {line.split()[0]: line.split() for line in lines[3:] if line.strip() and not line.endswith("hosts")}
+    assert {name: cells[1] for name, cells in rows.items()} == {
+        host.name: host.hostname for _, host in core.list_hosts(load_config())
+    }
+    assert lines[1].split() == ["NAME", "HOSTNAME", "USER", "PORT", "SSH", "ANSIBLE", "GROUPS", "INV"]
+    assert all(cells[-1] in ("personal", "work") for cells in rows.values())
+
+
 def test_a_mark_says_exactly_what_export_writes(home):
     write_mixed(home)
     assert run("export") == 0

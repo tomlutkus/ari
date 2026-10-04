@@ -2,7 +2,7 @@
 title: ARI
 section: 1
 header: User Commands
-footer: ari 0.5.0
+footer: ari 0.6.0
 date: October 2026
 ---
 
@@ -46,7 +46,7 @@ Names and aliases are unique across all inventories, compared case-insensitively
 
 Generated files are output, not something to edit. **ari** records a hash of every file it writes and refuses to overwrite one that changed since.
 
-With no command on a terminal, **ari** opens a browser over the hosts; see **TUI**. When input or output isn't a terminal, it prints help instead.
+With no command on a terminal, **ari** opens the TUI, described under **TUI**. When input or output isn't a terminal, it prints help instead.
 
 # THE NAME
 
@@ -74,7 +74,7 @@ List hosts across every inventory, or only the one named with **-i**. User and p
 
 Between PORT and GROUPS, each module that writes files for an inventory listed gets a column, headed by its name: **✓** when **export** writes the host there, *excluded* when the host lists that module in **exclude**, and **·** when the host's inventory doesn't have the module on. A parked module gets no column.
 
-GROUPS shows as many of a host's groups as fit beside the other columns, in the order the host lists them, then +*N* for the rest, so a row never wraps on their account; **show** lists them all. Output to a pipe is laid out for 80 columns unless **COLUMNS** says otherwise.
+GROUPS shows as many of a host's groups as fit beside the other columns, in the order the host lists them, then +*N* for the rest, so a row never wraps on their account; **show** lists them all. Output to a pipe is laid out for 80 columns unless **COLUMNS** says otherwise. The other columns are never cut: when they alone don't fit, GROUPS shrinks to the width of its heading and the rows run past the edge, every name and address whole.
 
 | Option | Meaning |
 |-------|-------------|
@@ -120,7 +120,7 @@ Remove a host, found by name or alias, from whichever inventory holds it. **-i**
 
 ## group [*NAME*]
 
-Without *NAME*, list the declared groups of every inventory, or only the one named with **-i**, in the order they're declared. HOSTS counts a group's hosts as Ansible sees them: the ones that list it and the ones any group below it holds, with the direct count beside it when children bring more. CHILDREN, REASONS and ABOUT, the description's first line, share the width the other columns leave and never wrap.
+Without *NAME*, list the declared groups of every inventory, or only the one named with **-i**, in the order they're declared. HOSTS counts a group's hosts as Ansible sees them: the ones that list it and the ones any group below it holds, with the direct count beside it when children bring more. CHILDREN, REASONS and ABOUT, the description's first line, share the width the other columns leave and never wrap. GROUP, HOSTS and INV are never cut: when they alone don't fit, the other three shrink to the width of their headings and the rows run past the edge.
 
 With *NAME*, declare that group in one inventory, **-i**, then **ARI_INVENTORY**, then **default** from config.toml, or change it if it's declared already. A new name needs at least one character and no spaces or colons, so **--group** *GROUP*[:*REASON*] can name it.
 
@@ -172,20 +172,20 @@ The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and 
 
 | Key | Action |
 |-------|-------------|
-| **/** | Move to the filter. Letters typed there go into the filter, never to the keys below |
-| **Enter** | In the filter, back to the list. In the list, the selected host, as **show** prints it |
-| **Escape** | In the list or the filter, clear the filter. In a host's details, an export report, the form or the group picker, back to the list without saving |
-| **s** | **ssh** to the selected host, from the list or its details. The TUI hands the terminal to ssh and comes back when the session ends; if ssh fails to connect (exit 255), the TUI says so once it's back |
-| **a** | Add a host, in the form below |
-| **e** | Edit the selected host, from the list or its details, in the same form filled with its own values |
-| **g** | The selected host's groups, from the list or its details, in the picker below |
-| **d** | Delete the selected host, from the list or its details, once **y** answers the prompt; **n** or **Escape** keeps it. The list reads the inventories again, and the cursor lands on the row that took the host's place |
-| **x** | Export what the TUI lists, as **ari export** does: each file as export reports it, or every problem that stopped it, with nothing written. A hand-edited target stays refused; overwriting it takes **ari export --force** |
-| **q** | Quit |
+| **/** | In the list, move to the filter. Letters typed there go into the filter, never to the keys below |
+| **Enter** | In the filter, back to the list. In the list, the selected host's details, as **show** prints them. In an export report, back to the list |
+| **Escape** | In the list or the filter, clear the filter. In a host's details or an export report, back to the list. In the form, the group picker or the delete prompt, back without saving |
+| **s** | In the list or a host's details, **ssh** to that host. The TUI hands the terminal to ssh and comes back when the session ends; if ssh fails to connect (exit 255), the TUI says so once it's back |
+| **a** | In the list, add a host in the form below |
+| **e** | In the list or a host's details, edit that host in the same form, filled with its own values |
+| **g** | In the list or a host's details, that host's groups, in the picker below |
+| **d** | In the list or a host's details, delete that host once **y** answers the prompt; **n** or **Escape** keeps it. The list reads the inventories again, and the cursor lands on the row that took the host's place |
+| **x** | In the list, export what the TUI lists, as **ari export** does: each file as export reports it, or every problem that stopped it, with nothing written. A hand-edited target stays refused; overwriting it takes **ari export --force** |
+| **q** | In the list, a host's details or an export report, quit. In the form, the group picker and the delete prompt it's an ordinary key, so nothing unsaved is lost to it |
 
 The form holds the inventory (on **a** only), name, hostname, user, port, key, notes, aliases separated by spaces, ssh options one per line as ssh_config takes them (*KEYWORD VALUE* or *KEYWORD*=*VALUE*), and a box per module to exclude the host from. Groups aren't on it. An empty user, port or key follows the inventory default, which shows in the empty field; emptying one that's set goes back to the default, as **''** does for **edit**.
 
-**Tab** and **Enter** move to the next field, **Ctrl+S** saves and **Escape** cancels. Saving runs the checks **add** and **edit** run and saves nothing if any fails: each problem shows under the field it's about, and one that belongs to no field at the top. After a save the list reads the inventories again with the cursor on the host, and says so when the filter hides it.
+**Tab** moves to the next field, and so does **Enter** in a one-line field; in the ssh options it starts a new line. **Ctrl+S** saves and **Escape** cancels. Saving runs the checks **add** and **edit** run and saves nothing if any fails: each problem shows under the field it's about, and one that belongs to no field at the top. After a save the list reads the inventories again with the cursor on the host, and says so when the filter hides it.
 
 The group picker lists the inventory's declared groups in the order they're declared, each with the first line of its description, checked where the host is a member. A group the host names without a declaration shows too, marked as not declared, so it can be unchecked. **Space** checks or unchecks the highlighted group, and leaving a group drops its reason. When the highlighted group is checked and declares reasons, a reason picker below it offers them and *no reason*; the reason chosen shows beside the group. **Ctrl+S** saves what changed, as **edit --group** and **--ungroup** would and through the same checks, and **Escape** cancels. A refusal shows above the list and saves nothing. Belonging to two zones passes here, as it does for **edit**; **export** refuses it.
 
@@ -197,7 +197,7 @@ The group picker lists the inventory's declared groups in the order they're decl
 | **-h**, **--help** | Show help for **ari** or for one command |
 | **--version** | Show the version |
 
-**add**, **import** and **group** *NAME* write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. The TUI, **ls**, **show**, **export** and **group** without a name cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
+**add**, **import** and **group** *NAME* write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml, which is also where the TUI's add form starts. The TUI, **ls**, **show**, **export** and **group** without a name cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
 
 # CONFIGURATION
 
@@ -227,7 +227,7 @@ zones = "zone_*"
 
 | Key | Meaning |
 |-------------|------------|
-| **default** | Inventory used by **add**, **import** and **group** *NAME* when **-i** and **ARI_INVENTORY** are unset |
+| **default** | Inventory used by **add**, **import**, **group** *NAME* and the TUI's add form when **-i** and **ARI_INVENTORY** are unset |
 | `inventories.NAME.file` | Inventory data; defaults to `NAME.json` beside config.toml |
 | `inventories.NAME.MODULE` | A module this inventory uses, with that module's settings |
 | `inventories.NAME.MODULE.enabled` | **false** parks the module without losing its settings |
@@ -300,7 +300,7 @@ A file that fails to parse stops **ari** with the path and the error. It is neve
 
 # VALIDATION
 
-**add** and **edit** check the host they write and save nothing if any check fails, listing every problem at once: the name and aliases are valid ssh host names and unique across all inventories, the hostname has no spaces, the port is 1-65535, every group is declared, every reason is one its group declares, and each installed module accepts the host's data. ssh options can't repeat a keyword the host has a field for, like **User** or **Port**.
+**add** and **edit** check the host they write and save nothing if any check fails, listing every problem at once: the name and aliases are valid ssh host names and unique across all inventories, the hostname has no spaces, the port is 1-65535, every group is declared, every reason is one its group declares, and each installed module accepts the host's data. ssh options can't repeat a keyword the host has a field for, like **User** or **Port**. The TUI's form and group picker save through these same checks.
 
 **group** checks the group it writes the same way: a new name is usable, every child is declared, children form no cycle, and nothing a host relies on is removed. Only problems the write would add stop it; one already elsewhere in the inventory doesn't.
 
@@ -336,7 +336,7 @@ The files get mode 0644, so anyone who runs playbooks from the repository can re
 
 | Variable | Effect |
 |-------|-------------|
-| **ARI_INVENTORY** | Inventory for **add**, **import** and **group** *NAME* when **-i** is not given |
+| **ARI_INVENTORY** | Inventory for **add**, **import**, **group** *NAME* and the TUI's add form when **-i** is not given |
 | **XDG_CONFIG_HOME** | Where config.toml and inventories live |
 | **XDG_STATE_HOME** | Where the guard state lives |
 
@@ -386,6 +386,12 @@ Find every host on a subnet:
 
 ```
 ari ls --search 192.0.2.
+```
+
+Browse the work hosts in the TUI, then filter with **/** and ssh to one with **s**:
+
+```
+ari -i work
 ```
 
 Accept a file after reviewing a hand edit:

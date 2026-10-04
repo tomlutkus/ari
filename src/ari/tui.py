@@ -57,6 +57,7 @@ class Report(Screen):
     BINDINGS = [
         Binding("escape", "app.pop_screen", "Back"),
         Binding("enter", "app.pop_screen", "Back", show=False),
+        Binding("q", "app.quit", "Quit"),
     ]
 
     def __init__(self, text: Text) -> None:
@@ -78,6 +79,7 @@ class Details(Screen):
         Binding("e", "edit", "Edit"),
         Binding("g", "groups", "Groups"),
         Binding("d", "delete", "Delete"),
+        Binding("q", "app.quit", "Quit"),
     ]
 
     def __init__(self, row: Row) -> None:
@@ -423,6 +425,7 @@ class HostList(Screen):
         Binding("g", "groups", "Groups"),
         Binding("d", "delete", "Delete"),
         Binding("x", "export", "Export"),
+        Binding("q", "app.quit", "Quit"),
         Binding("escape", "clear", "Clear filter", show=False),
     ]
 
@@ -601,17 +604,18 @@ class HostList(Screen):
 
 
 class Browser(App):
+    """The TUI: the host list, and every screen it opens."""
+
     TITLE = "ari"
     ENABLE_COMMAND_PALETTE = False
     CSS = """
-    #details, #report, #form { padding: 1 2; }
+    #details, #report, #form, #picker { padding: 1 2; }
     #form .row { height: auto; }
     #form .row Label { width: 14; padding: 1 1 0 0; }
     #form .row Input, #form .row Select { width: 1fr; }
     #form .row.tall TextArea { height: 6; width: 1fr; }
     #form .error { color: $error; padding: 0 0 0 14; }
     #form #title, #picker #title { text-style: bold; padding: 0 0 1 0; }
-    #picker { padding: 1 2; }
     #picker .error { color: $error; padding: 0 0 1 0; }
     #picker SelectionList { height: 1fr; }
     #reason-row { height: auto; padding: 1 0 0 0; }
@@ -620,7 +624,8 @@ class Browser(App):
     Confirm { align: center middle; }
     #dialog { width: auto; height: auto; padding: 1 3; border: thick $error; background: $surface; }
     """
-    BINDINGS = [Binding("q", "quit", "Quit")]
+    # q quits only where nothing is unsaved: the list, a host's details and an export report bind it.
+    # In the form, the picker and the delete prompt it's just a key, and Escape is the way out.
 
     def __init__(self, cfg: Config, scope: str | None, modules: list[str], rows: list[Row]) -> None:
         super().__init__()

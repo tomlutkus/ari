@@ -195,9 +195,27 @@ def test_s_and_enter_do_nothing_when_no_host_matches(hosts, monkeypatch):
     drive(app, script)
 
 
-def test_q_quits(hosts):
-    app = drive(browser(), lambda pilot: pilot.press("q"))
-    assert app.return_code == 0
+@pytest.mark.parametrize("keys", [["q"], ["enter", "q"], ["x", "q"]])
+def test_q_quits_from_the_list_a_hosts_details_and_an_export_report(hosts, keys):
+    app = drive(browser(), lambda pilot: pilot.press(*keys))
+    assert app.return_code == 0 and not app.is_running
+
+
+def test_q_is_just_a_key_where_something_is_unsaved(hosts):
+    async def script(pilot):
+        await pilot.press("d", "q")
+        assert isinstance(app.screen, tui.Confirm)
+        await pilot.press("n", "g", "q")
+        assert isinstance(app.screen, tui.GroupPicker)
+        await pilot.press("escape", "e", "q")
+        assert isinstance(app.screen, tui.HostForm) and app.screen.query_one("#f-name", Input).value == "q"
+        app.screen.query_one("#x-ssh", Checkbox).focus()
+        await pilot.press("q")
+        assert isinstance(app.screen, tui.HostForm)
+
+    app = browser()
+    drive(app, script)
+    assert app.return_code is None
 
 
 def work_json(home):

@@ -80,6 +80,16 @@ def test_list_never_wraps_at_80_columns(roles, monkeypatch, capsys):
     assert sum("role_standalone" in line for line in lines) == 1
 
 
+def test_list_keeps_every_column_whole_when_they_alone_are_too_wide(roles, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "out", Console(width=30, highlight=False))
+    assert run("group") == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[1].split() == ["GROUP", "HOSTS", "CHILDREN", "REASONS", "ABOUT", "INV"]
+    rows = {line.split()[0]: line for line in lines[3:] if line.strip() and not line.endswith("groups")}
+    assert set(rows) == {"role_cluster", "role_standalone", "role_node", "no_auto_update"}
+    assert "3 (1 direct)" in rows["role_node"] and all(row.rstrip().endswith("personal") for row in rows.values())
+
+
 def test_list_covers_every_inventory_unless_narrowed(both, capsys):
     run("group", "backups")
     run("-i", "work", "group", "zone_app")

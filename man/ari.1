@@ -15,7 +15,7 @@
 . ftr VB CB
 . ftr VBI CBI
 .\}
-.TH "ARI" "1" "October 2026" "ari 0.5.0" "User Commands"
+.TH "ARI" "1" "October 2026" "ari 0.6.0" "User Commands"
 .hy
 .SH NAME
 .PP
@@ -94,8 +94,8 @@ file it writes and refuses to overwrite
 one that changed since.
 .PP
 With no command on a terminal,
-\f[B]ari\f[R] opens a browser over the
-hosts; see \f[B]TUI\f[R].
+\f[B]ari\f[R] opens the TUI, described
+under \f[B]TUI\f[R].
 When input or output isn\[aq]t a
 terminal, it prints help instead.
 .SH THE NAME
@@ -170,6 +170,11 @@ never wraps on their account;
 Output to a pipe is laid out for 80
 columns unless \f[B]COLUMNS\f[R] says
 otherwise.
+The other columns are never cut: when
+they alone don\[aq]t fit, GROUPS shrinks
+to the width of its heading and the rows
+run past the edge, every name and
+address whole.
 .PP
 .TS
 tab(@);
@@ -364,6 +369,10 @@ CHILDREN, REASONS and ABOUT, the
 description\[aq]s first line, share the
 width the other columns leave and never
 wrap.
+GROUP, HOSTS and INV are never cut: when
+they alone don\[aq]t fit, the other
+three shrink to the width of their
+headings and the rows run past the edge.
 .PP
 With \f[I]NAME\f[R], declare that group
 in one inventory, \f[B]-i\f[R], then
@@ -634,7 +643,7 @@ _
 T{
 \f[B]/\f[R]
 T}@T{
-Move to the filter.
+In the list, move to the filter.
 Letters typed there go into the filter,
 never to the keys below
 T}
@@ -642,23 +651,25 @@ T{
 \f[B]Enter\f[R]
 T}@T{
 In the filter, back to the list.
-In the list, the selected host, as
-\f[B]show\f[R] prints it
+In the list, the selected host\[aq]s
+details, as \f[B]show\f[R] prints them.
+In an export report, back to the list
 T}
 T{
 \f[B]Escape\f[R]
 T}@T{
 In the list or the filter, clear the
 filter.
-In a host\[aq]s details, an export
-report, the form or the group picker,
-back to the list without saving
+In a host\[aq]s details or an export
+report, back to the list.
+In the form, the group picker or the
+delete prompt, back without saving
 T}
 T{
 \f[B]s\f[R]
 T}@T{
-\f[B]ssh\f[R] to the selected host, from
-the list or its details.
+In the list or a host\[aq]s details,
+\f[B]ssh\f[R] to that host.
 The TUI hands the terminal to ssh and
 comes back when the session ends; if ssh
 fails to connect (exit 255), the TUI
@@ -667,27 +678,29 @@ T}
 T{
 \f[B]a\f[R]
 T}@T{
-Add a host, in the form below
+In the list, add a host in the form
+below
 T}
 T{
 \f[B]e\f[R]
 T}@T{
-Edit the selected host, from the list or
-its details, in the same form filled
+In the list or a host\[aq]s details,
+edit that host in the same form, filled
 with its own values
 T}
 T{
 \f[B]g\f[R]
 T}@T{
-The selected host\[aq]s groups, from the
-list or its details, in the picker below
+In the list or a host\[aq]s details,
+that host\[aq]s groups, in the picker
+below
 T}
 T{
 \f[B]d\f[R]
 T}@T{
-Delete the selected host, from the list
-or its details, once \f[B]y\f[R] answers
-the prompt; \f[B]n\f[R] or
+In the list or a host\[aq]s details,
+delete that host once \f[B]y\f[R]
+answers the prompt; \f[B]n\f[R] or
 \f[B]Escape\f[R] keeps it.
 The list reads the inventories again,
 and the cursor lands on the row that
@@ -696,10 +709,10 @@ T}
 T{
 \f[B]x\f[R]
 T}@T{
-Export what the TUI lists, as \f[B]ari
-export\f[R] does: each file as export
-reports it, or every problem that
-stopped it, with nothing written.
+In the list, export what the TUI lists,
+as \f[B]ari export\f[R] does: each file
+as export reports it, or every problem
+that stopped it, with nothing written.
 A hand-edited target stays refused;
 overwriting it takes \f[B]ari export
 --force\f[R]
@@ -707,7 +720,11 @@ T}
 T{
 \f[B]q\f[R]
 T}@T{
-Quit
+In the list, a host\[aq]s details or an
+export report, quit.
+In the form, the group picker and the
+delete prompt it\[aq]s an ordinary key,
+so nothing unsaved is lost to it
 T}
 .TE
 .PP
@@ -728,9 +745,12 @@ goes back to the default, as
 \f[B]\[aq]\[aq]\f[R] does for
 \f[B]edit\f[R].
 .PP
-\f[B]Tab\f[R] and \f[B]Enter\f[R] move
-to the next field, \f[B]Ctrl+S\f[R]
-saves and \f[B]Escape\f[R] cancels.
+\f[B]Tab\f[R] moves to the next field,
+and so does \f[B]Enter\f[R] in a
+one-line field; in the ssh options it
+starts a new line.
+\f[B]Ctrl+S\f[R] saves and
+\f[B]Escape\f[R] cancels.
 Saving runs the checks \f[B]add\f[R] and
 \f[B]edit\f[R] run and saves nothing if
 any fails: each problem shows under the
@@ -802,7 +822,9 @@ T}
 \f[B]group\f[R] \f[I]NAME\f[R] write to
 one inventory: \f[B]-i\f[R], then
 \f[B]ARI_INVENTORY\f[R], then
-\f[B]default\f[R] from config.toml.
+\f[B]default\f[R] from config.toml,
+which is also where the TUI\[aq]s add
+form starts.
 The TUI, \f[B]ls\f[R], \f[B]show\f[R],
 \f[B]export\f[R] and \f[B]group\f[R]
 without a name cover every inventory
@@ -861,8 +883,9 @@ T{
 \f[B]default\f[R]
 T}@T{
 Inventory used by \f[B]add\f[R],
-\f[B]import\f[R] and \f[B]group\f[R]
-\f[I]NAME\f[R] when \f[B]-i\f[R] and
+\f[B]import\f[R], \f[B]group\f[R]
+\f[I]NAME\f[R] and the TUI\[aq]s add
+form when \f[B]-i\f[R] and
 \f[B]ARI_INVENTORY\f[R] are unset
 T}
 T{
@@ -1094,6 +1117,8 @@ accepts the host\[aq]s data.
 ssh options can\[aq]t repeat a keyword
 the host has a field for, like
 \f[B]User\f[R] or \f[B]Port\f[R].
+The TUI\[aq]s form and group picker save
+through these same checks.
 .PP
 \f[B]group\f[R] checks the group it
 writes the same way: a new name is
@@ -1244,9 +1269,9 @@ T{
 \f[B]ARI_INVENTORY\f[R]
 T}@T{
 Inventory for \f[B]add\f[R],
-\f[B]import\f[R] and \f[B]group\f[R]
-\f[I]NAME\f[R] when \f[B]-i\f[R] is not
-given
+\f[B]import\f[R], \f[B]group\f[R]
+\f[I]NAME\f[R] and the TUI\[aq]s add
+form when \f[B]-i\f[R] is not given
 T}
 T{
 \f[B]XDG_CONFIG_HOME\f[R]
@@ -1326,6 +1351,16 @@ Find every host on a subnet:
 .nf
 \f[C]
 ari ls --search 192.0.2.
+\f[R]
+.fi
+.PP
+Browse the work hosts in the TUI, then
+filter with \f[B]/\f[R] and ssh to one
+with \f[B]s\f[R]:
+.IP
+.nf
+\f[C]
+ari -i work
 \f[R]
 .fi
 .PP

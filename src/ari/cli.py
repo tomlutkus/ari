@@ -19,6 +19,7 @@ from .errors import HostsError
 from .paths import tilde
 
 out = Console(highlight=False)
+_UNBOUNDED = 10_000  # wider than any table, for measuring one with nothing cut
 err = Console(stderr=True, highlight=False)
 
 
@@ -56,6 +57,22 @@ def _fit_names(names: list[str], width: int) -> Text:
     return first + rest
 
 
+def _natural_width(table: Table) -> int:
+    """How wide table is with nothing cut, however narrow the console."""
+    return Measurement.get(out, out.options.update_width(_UNBOUNDED), table).maximum
+
+
+def _print_whole(table: Table) -> None:
+    """Print table with every column whole. When that's wider than the console, the rows run past
+    the edge at full length instead: a name or an address cut short would read as a real one."""
+    natural = _natural_width(table)
+    if natural > out.width:
+        table.width = natural
+        out.print(table, crop=False)
+    else:
+        out.print(table)
+
+
 def _mark(cfg: Config, inventory, host, module: str) -> Text:
     reach = core.module_reach(cfg, inventory, host, module)
     return Text(reach.value, style="dim" if reach is core.ModuleReach.OFF else "")
@@ -85,9 +102,9 @@ def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
         return 0
     modules = core.export_modules(cfg, _inventory_arg(args))
     # GROUPS gets whatever width the other columns leave, so a row never wraps on its account.
-    bare = Measurement.get(out, out.options, _ls_table(cfg, modules, rows, [Text("")] * len(rows))).maximum
-    width = out.width - (bare - len("GROUPS"))
-    out.print(_ls_table(cfg, modules, rows, [_fit_names(host.groups, width) for _, host in rows]))
+    bare = _natural_width(_ls_table(cfg, modules, rows, [Text("")] * len(rows)))
+    room = max(out.width - (bare - len("GROUPS")), len("GROUPS"))
+    _print_whole(_ls_table(cfg, modules, rows, [_fit_names(host.groups, room) for _, host in rows]))
     out.print(Text(_plural(len(rows), "host"), style="dim"))
     return 0
 
@@ -159,7 +176,7 @@ def _print_groups(rows: list[core.GroupRow]) -> None:
     """GROUP, HOSTS and INV stay whole. CHILDREN, REASONS and ABOUT (the description's first line)
     share what they leave, the widest giving way first, so a row never wraps."""
     lists = [(row.group.children, list(row.group.reasons), row.group.description.partition("\n")[0]) for row in rows]
-    bare = Measurement.get(out, out.options, _group_table(rows, [(Text(""),) * 3] * len(rows))).maximum
+    bare = _natural_width(_group_table(rows, [(Text(""),) * 3] * len(rows)))
     floors = [len(h) for h in GROUP_COLUMNS[2:5]]
     room = out.width - bare + sum(floors)
     give = [
@@ -174,7 +191,7 @@ def _print_groups(rows: list[core.GroupRow]) -> None:
         text = Text(description or "-", style="dim")
         text.truncate(give[2], overflow="ellipsis")
         cells.append((_fit_names(children, give[0]), _fit_names(reasons, give[1]), text))
-    out.print(_group_table(rows, cells))
+    _print_whole(_group_table(rows, cells))
 
 
 def cmd_group(cfg: Config, args: argparse.Namespace) -> int:
@@ -346,6 +363,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="ari",
         parents=[common],
         description="Keep SSH hosts in one place; export ssh config and Ansible inventory from it.",
+        epilog="With no command on a terminal, ari opens the TUI. See ari(1).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
@@ -361,7 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
     ls.set_defaults(func=cmd_ls)
 
     show = sub.add_parser("show", parents=[common], help="show one host with its effective values")
-    show.add_argument("name", help="host name or alias")
+    show.add_argument("name", metavar="NAME", help="host name or alias")
     show.set_defaults(func=cmd_show)
 
     add = sub.add_parser("add", parents=[common], help="add a host to one inventory")

@@ -2,13 +2,14 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
-## Unreleased
+## 0.6.0 (2026-10-04)
 
-- `ari` with no command on a terminal opens a TUI: a table of every host, or of the inventory `-i` names, under a filter that narrows it as you type and matches what `ls --search` matches. `/` moves to the filter, Enter shows the host as `show` prints it, `s` runs ssh and comes back to the list when the session ends, `q` quits. Without a terminal, `ari` prints help as before. textual is a new dependency.
-- `ls` and the TUI have a column per module that writes files, headed by its name: `✓` when `export` writes the host there, `excluded` when the host lists the module in `exclude`, `·` when its inventory doesn't have the module on. In `ls` they sit between PORT and GROUPS.
-- In the TUI, `d` deletes the selected host after a `y` at the prompt, from the list or its details, and `x` exports what the TUI lists. The report shows each file as `ari export` prints it, or every problem that stopped the export with nothing written. A hand-edited file still takes `ari export --force` from the shell.
+- `ari` with no command on a terminal opens a TUI: a table of every host, or of the inventory `-i` names, under a filter that narrows it as you type and matches what `ls --search` matches. `/` moves to the filter, Enter shows the host as `show` prints it, `s` runs ssh and comes back to the list when the session ends, and `q` quits from the list, a host's details or an export report. Without a terminal, `ari` prints help as before. textual is a new dependency.
 - In the TUI, `a` opens a form for a new host and `e` the same form for the selected one, filled with its own values and showing the defaults it follows. Ctrl+S saves through the same checks as `add` and `edit`, each problem under the field it's about; Escape cancels.
 - In the TUI, `g` opens the selected host's groups as a checklist of the inventory's declared groups, with a reason picker for the checked ones that declare reasons. Ctrl+S saves what changed through the same checks as `edit --group` and `--ungroup`.
+- In the TUI, `d` deletes the selected host once `y` answers the prompt, and `x` exports what the TUI lists. The report shows each file as `ari export` prints it, or every problem that stopped the export with nothing written. A hand-edited file still takes `ari export --force` from the shell.
+- `ls` and the TUI have a column per module that writes files, headed by its name: `✓` when `export` writes the host there, `excluded` when the host lists the module in `exclude`, `·` when its inventory doesn't have the module on. In `ls` they sit between PORT and GROUPS.
+- `ls` and `ari group` never cut a fixed column. When those alone are wider than the terminal or the 80 columns a pipe gets, the flexible columns shrink to their headings and the rows run past the edge whole, so `ari ls | grep` sees every name and address.
 - `add` and `edit` check the name, hostname, port and every alias each on its own, so all the malformed ones are listed instead of only the first.
 
 ## 0.5.0 (2026-10-04)

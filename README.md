@@ -80,6 +80,8 @@ all:
       ansible_port: 2222
 ```
 
+Run `ari` on its own and the same list opens as a TUI. Type `/` to filter, Enter for a host's details, `s` to ssh straight in and come back when the session ends, and `a`, `e`, `g`, `d` and `x` to add, edit, regroup, delete and export without leaving it. Every change goes through the same checks as the commands.
+
 ## How it stays safe
 
 ssh resolves every generated file in one namespace where the first match wins, so a duplicate name would silently shadow a host. ari refuses any name or alias already in use, on every add, edit and import.
@@ -113,7 +115,8 @@ $ ari modules
 - [x] `make install`, `make man` and `make check`
 - [x] `ari init` writes a starter config
 - [x] `ari group` declares, changes and removes groups
-- [ ] TUI, with a key that drops you straight into ssh
+- [x] TUI, with a key that drops you straight into ssh
+- [ ] Repeated ssh keywords kept in full (schema version 3)
 
 ## Install
 
