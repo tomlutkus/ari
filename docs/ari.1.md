@@ -174,10 +174,11 @@ The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and 
 |-------|-------------|
 | **/** | Move to the filter. Letters typed there go into the filter, never to the keys below |
 | **Enter** | In the filter, back to the list. In the list, the selected host, as **show** prints it |
-| **Escape** | In the list or the filter, clear the filter. In a host's details, an export report or the form, back to the list without saving |
+| **Escape** | In the list or the filter, clear the filter. In a host's details, an export report, the form or the group picker, back to the list without saving |
 | **s** | **ssh** to the selected host, from the list or its details. The TUI hands the terminal to ssh and comes back when the session ends; if ssh fails to connect (exit 255), the TUI says so once it's back |
 | **a** | Add a host, in the form below |
 | **e** | Edit the selected host, from the list or its details, in the same form filled with its own values |
+| **g** | The selected host's groups, from the list or its details, in the picker below |
 | **d** | Delete the selected host, from the list or its details, once **y** answers the prompt; **n** or **Escape** keeps it. The list reads the inventories again, and the cursor lands on the row that took the host's place |
 | **x** | Export what the TUI lists, as **ari export** does: each file as export reports it, or every problem that stopped it, with nothing written. A hand-edited target stays refused; overwriting it takes **ari export --force** |
 | **q** | Quit |
@@ -185,6 +186,8 @@ The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and 
 The form holds the inventory (on **a** only), name, hostname, user, port, key, notes, aliases separated by spaces, ssh options one per line as ssh_config takes them (*KEYWORD VALUE* or *KEYWORD*=*VALUE*), and a box per module to exclude the host from. Groups aren't on it. An empty user, port or key follows the inventory default, which shows in the empty field; emptying one that's set goes back to the default, as **''** does for **edit**.
 
 **Tab** and **Enter** move to the next field, **Ctrl+S** saves and **Escape** cancels. Saving runs the checks **add** and **edit** run and saves nothing if any fails: each problem shows under the field it's about, and one that belongs to no field at the top. After a save the list reads the inventories again with the cursor on the host, and says so when the filter hides it.
+
+The group picker lists the inventory's declared groups in the order they're declared, each with the first line of its description, checked where the host is a member. A group the host names without a declaration shows too, marked as not declared, so it can be unchecked. **Space** checks or unchecks the highlighted group, and leaving a group drops its reason. When the highlighted group is checked and declares reasons, a reason picker below it offers them and *no reason*; the reason chosen shows beside the group. **Ctrl+S** saves what changed, as **edit --group** and **--ungroup** would and through the same checks, and **Escape** cancels. A refusal shows above the list and saves nothing. Belonging to two zones passes here, as it does for **edit**; **export** refuses it.
 
 # OPTIONS
 

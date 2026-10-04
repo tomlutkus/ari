@@ -651,8 +651,8 @@ T}@T{
 In the list or the filter, clear the
 filter.
 In a host\[aq]s details, an export
-report or the form, back to the list
-without saving
+report, the form or the group picker,
+back to the list without saving
 T}
 T{
 \f[B]s\f[R]
@@ -675,6 +675,12 @@ T}@T{
 Edit the selected host, from the list or
 its details, in the same form filled
 with its own values
+T}
+T{
+\f[B]g\f[R]
+T}@T{
+The selected host\[aq]s groups, from the
+list or its details, in the picker below
 T}
 T{
 \f[B]d\f[R]
@@ -734,6 +740,33 @@ After a save the list reads the
 inventories again with the cursor on the
 host, and says so when the filter hides
 it.
+.PP
+The group picker lists the
+inventory\[aq]s declared groups in the
+order they\[aq]re declared, each with
+the first line of its description,
+checked where the host is a member.
+A group the host names without a
+declaration shows too, marked as not
+declared, so it can be unchecked.
+\f[B]Space\f[R] checks or unchecks the
+highlighted group, and leaving a group
+drops its reason.
+When the highlighted group is checked
+and declares reasons, a reason picker
+below it offers them and \f[I]no
+reason\f[R]; the reason chosen shows
+beside the group.
+\f[B]Ctrl+S\f[R] saves what changed, as
+\f[B]edit --group\f[R] and
+\f[B]--ungroup\f[R] would and through
+the same checks, and \f[B]Escape\f[R]
+cancels.
+A refusal shows above the list and saves
+nothing.
+Belonging to two zones passes here, as
+it does for \f[B]edit\f[R];
+\f[B]export\f[R] refuses it.
 .SH OPTIONS
 .PP
 .TS

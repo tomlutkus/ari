@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 from rich.console import Console
-from textual.widgets import Checkbox, DataTable, Input, Select, Static, TextArea
+from textual.widgets import Checkbox, DataTable, Input, Select, SelectionList, Static, TextArea
 
 from conftest import write_mixed
 from ari import cli, core, tui
@@ -580,6 +580,195 @@ def test_e_from_details_and_a_hidden_new_host_is_reported(hosts, monkeypatch):
 )
 def test_options_read_the_way_ssh_config_does(text, pairs):
     assert tui.parse_options(text) == pairs
+
+
+def add_reason(home, key, text):
+    data = json.loads(work_json(home).read_text())
+    data["groups"]["no_auto_update"]["reasons"][key] = text
+    work_json(home).write_text(json.dumps(data))
+
+
+async def groups(pilot, name):
+    await find(pilot, name)
+    await pilot.press("g")
+    picker = pilot.app.screen
+    assert isinstance(picker, tui.GroupPicker)
+    return picker
+
+
+async def highlight(pilot, picker, group):
+    """Move the list's highlight onto group with the arrow keys."""
+    options = picker.query_one(SelectionList)
+    options.focus()
+    for _ in range(options.option_count):
+        if options.get_option_at_index(options.highlighted).value == group:
+            return
+        await pilot.press("down")
+    pytest.fail(f"{group} isn't in the picker")
+
+
+def prompt(picker, group) -> str:
+    return picker.query_one(SelectionList).get_option(group).prompt.plain
+
+
+def test_g_lists_declared_groups_checked_where_the_host_is_a_member(hosts):
+    async def script(pilot):
+        picker = await groups(pilot, "vault")
+        options = picker.query_one(SelectionList)
+        assert [options.get_option_at_index(i).value for i in range(options.option_count)] == ["zone_app", "no_auto_update"]
+        assert sorted(options.selected) == ["no_auto_update", "zone_app"]
+        assert prompt(picker, "zone_app") == "zone_app  app subnet (192.0.2.0/25)"
+        assert prompt(picker, "no_auto_update") == "no_auto_update (secrets)"
+
+    drive(browser(), script)
+
+
+def test_space_checks_a_group_and_ctrl_s_saves_it(hosts):
+    async def script(pilot):
+        picker = await groups(pilot, "fw")
+        await highlight(pilot, picker, "zone_app")
+        assert not picker.query_one("#reason-row").display
+        await pilot.press("space", "ctrl+s")
+        assert app.screen is app.hosts and app.hosts.selected()[1].name == "fw"
+
+    app = browser()
+    assert drive(app, script).seen["cells"]["fw"]["GROUPS"] == "zone_app"
+    assert stored(hosts)["fw"]["groups"] == ["zone_app"]
+
+
+def test_unchecking_a_group_drops_it_and_its_reason(hosts):
+    async def script(pilot):
+        picker = await groups(pilot, "vault")
+        await highlight(pilot, picker, "no_auto_update")
+        assert picker.query_one("#reason-row").display
+        await pilot.press("space")
+        assert not picker.query_one("#reason-row").display and prompt(picker, "no_auto_update") == "no_auto_update"
+        await pilot.press("ctrl+s")
+
+    drive(browser(), script)
+    host = stored(hosts)["vault-01"]
+    assert host["groups"] == ["zone_app"] and "reasons" not in host
+
+
+def test_a_reason_is_set_changed_and_cleared(hosts):
+    add_reason(hosts, "remote", "remote access path")
+
+    async def pick(pilot, name, reason, check=False):
+        picker = await groups(pilot, name)
+        await highlight(pilot, picker, "no_auto_update")
+        if check:
+            await pilot.press("space")
+        row, select = picker.query_one("#reason-row"), picker.query_one("#reason", Select)
+        assert row.display
+        select.value = reason
+        await pilot.pause()
+        await pilot.press("ctrl+s")
+        await pilot.press("escape")
+
+    async def script(pilot):
+        await pick(pilot, "web-01", "remote", check=True)
+        assert stored(hosts)["web-01"]["reasons"] == {"no_auto_update": "remote"}
+        await pick(pilot, "web-01", "secrets")
+        assert stored(hosts)["web-01"]["reasons"] == {"no_auto_update": "secrets"}
+        await pick(pilot, "web-01", tui.NO_REASON)
+        host = stored(hosts)["web-01"]
+        assert "no_auto_update" in host["groups"] and "reasons" not in host
+
+    drive(browser(), script)
+
+
+def test_the_reason_picker_follows_the_highlight(hosts):
+    add_reason(hosts, "remote", "remote access path")
+
+    async def script(pilot):
+        picker = await groups(pilot, "vault")
+        select = picker.query_one("#reason", Select)
+        await highlight(pilot, picker, "no_auto_update")
+        assert select.value == "secrets"
+        select.value = "remote"
+        await pilot.pause()
+        assert prompt(picker, "no_auto_update") == "no_auto_update (remote)"
+        await highlight(pilot, picker, "zone_app")
+        assert not picker.query_one("#reason-row").display
+        await highlight(pilot, picker, "no_auto_update")
+        assert select.value == "remote"
+        await pilot.press("ctrl+s")
+
+    drive(browser(), script)
+    assert stored(hosts)["vault-01"]["reasons"] == {"no_auto_update": "remote"}
+
+
+@pytest.mark.parametrize("keys", [["escape"], ["ctrl+s"]])
+def test_escape_or_an_unchanged_save_writes_nothing(hosts, keys):
+    before = work_json(hosts).read_bytes()
+
+    async def script(pilot):
+        picker = await groups(pilot, "vault")
+        await highlight(pilot, picker, "no_auto_update")
+        await pilot.press(*keys)
+        assert app.screen is app.hosts
+
+    app = browser()
+    drive(app, script)
+    assert work_json(hosts).read_bytes() == before
+
+
+def test_a_stale_membership_shows_and_its_refusal_names_it(hosts):
+    data = json.loads(work_json(hosts).read_text())
+    data["hosts"][0]["groups"] = ["zone_typo"]
+    work_json(hosts).write_text(json.dumps(data))
+    before = work_json(hosts).read_bytes()
+
+    async def script(pilot):
+        picker = await groups(pilot, "fw")
+        assert picker.query_one(SelectionList).selected == ["zone_typo"]
+        assert prompt(picker, "zone_typo") == "zone_typo  not declared"
+        await highlight(pilot, picker, "zone_app")
+        await pilot.press("space", "ctrl+s")
+        error = picker.query_one("#error-general", Static)
+        assert error.display and "group 'zone_typo' isn't declared" in shown_text(error)
+        assert work_json(hosts).read_bytes() == before
+        await highlight(pilot, picker, "zone_typo")
+        await pilot.press("space", "ctrl+s")
+        assert app.screen is app.hosts
+
+    app = browser()
+    drive(app, script)
+    assert stored(hosts)["fw"]["groups"] == ["zone_app"]
+
+
+def test_the_picker_reaches_the_same_record_as_ari_edit(hosts):
+    async def script(pilot):
+        picker = await groups(pilot, "web-01")
+        await highlight(pilot, picker, "zone_app")
+        await pilot.press("space")
+        await highlight(pilot, picker, "no_auto_update")
+        await pilot.press("space")
+        picker.query_one("#reason", Select).value = "secrets"
+        await pilot.pause()
+        await pilot.press("ctrl+s")
+
+    drive(browser(), script)
+    by_picker = stored(hosts)["web-01"]
+    write_mixed(hosts)
+    assert main(["edit", "web-01", "--ungroup", "zone_app", "--group", "no_auto_update:secrets"]) == 0
+    by_cli = stored(hosts)["web-01"]
+    assert {k: v for k, v in by_picker.items() if k != "last_updated"} == {k: v for k, v in by_cli.items() if k != "last_updated"}
+
+
+def test_g_from_details_and_an_inventory_without_groups(hosts):
+    async def script(pilot):
+        await find(pilot, "fw")
+        await pilot.press("enter", "g")
+        assert isinstance(app.screen, tui.GroupPicker) and app.screen.host.name == "fw"
+        await pilot.press("escape", "escape")
+        picker = await groups(pilot, "nas")
+        assert "personal declares no groups" in shown_text(picker.query_one("#empty", Static))
+        await pilot.press("ctrl+s")
+        assert app.screen is app.hosts
+
+    app = browser()
+    drive(app, script)
 
 
 # The switch in ari's main(): a terminal opens the TUI, anything else gets help.

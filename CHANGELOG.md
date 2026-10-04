@@ -8,6 +8,7 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 - `ls` and the TUI have a column per module that writes files, headed by its name: `✓` when `export` writes the host there, `excluded` when the host lists the module in `exclude`, `·` when its inventory doesn't have the module on. In `ls` they sit between PORT and GROUPS.
 - In the TUI, `d` deletes the selected host after a `y` at the prompt, from the list or its details, and `x` exports what the TUI lists. The report shows each file as `ari export` prints it, or every problem that stopped the export with nothing written. A hand-edited file still takes `ari export --force` from the shell.
 - In the TUI, `a` opens a form for a new host and `e` the same form for the selected one, filled with its own values and showing the defaults it follows. Ctrl+S saves through the same checks as `add` and `edit`, each problem under the field it's about; Escape cancels.
+- In the TUI, `g` opens the selected host's groups as a checklist of the inventory's declared groups, with a reason picker for the checked ones that declare reasons. Ctrl+S saves what changed through the same checks as `edit --group` and `--ungroup`.
 - `add` and `edit` check the name, hostname, port and every alias each on its own, so all the malformed ones are listed instead of only the first.
 
 ## 0.5.0 (2026-10-04)

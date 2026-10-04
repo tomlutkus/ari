@@ -10,7 +10,8 @@ from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Checkbox, DataTable, Footer, Input, Label, Select, Static, TextArea
+from textual.widgets import Checkbox, DataTable, Footer, Input, Label, Select, SelectionList, Static, TextArea
+from textual.widgets.selection_list import Selection
 
 from . import core
 from .config import Config
@@ -75,6 +76,7 @@ class Details(Screen):
         Binding("escape", "app.pop_screen", "Back"),
         Binding("s", "ssh", "ssh"),
         Binding("e", "edit", "Edit"),
+        Binding("g", "groups", "Groups"),
         Binding("d", "delete", "Delete"),
     ]
 
@@ -98,6 +100,10 @@ class Details(Screen):
         # The list's cursor is still on this host, so the list opens the form and reloads after it.
         self.app.pop_screen()
         self.app.hosts.action_edit()
+
+    def action_groups(self) -> None:
+        self.app.pop_screen()
+        self.app.hosts.action_groups()
 
     def action_delete(self) -> None:
         self.app.pop_screen()
@@ -278,6 +284,133 @@ class HostForm(Screen[str | None]):
         self.dismiss(host.name)
 
 
+NO_REASON = ""
+
+
+class GroupPicker(Screen[str | None]):
+    """The host's groups, as a list of the inventory's declared ones to check, and a reason for each
+    checked group that declares reasons. Saving runs what ari edit --group and --ungroup run."""
+
+    BINDINGS = [
+        Binding("ctrl+s", "save", "Save"),
+        Binding("escape", "app.pop_screen", "Cancel"),
+    ]
+
+    def __init__(self, cfg: Config, inventory: Inventory, host: Host) -> None:
+        super().__init__()
+        self.cfg = cfg
+        self.inventory = inventory
+        self.host = host
+        self.reasons = dict(host.reasons)  # the reason picked for each group, as the picker stands
+        # Declared groups in declaration order, then any the record names without a declaration,
+        # so a stale membership shows and can be unchecked.
+        self.groups = list(inventory.groups) + [g for g in host.groups if g not in inventory.groups]
+        self.current: str | None = None  # the group the reason picker speaks for
+
+    def _prompt(self, group: str) -> Text:
+        declared = self.inventory.groups.get(group)
+        about = declared.description.partition("\n")[0] if declared else "not declared"
+        prompt = Text(group)
+        if self.reasons.get(group):
+            prompt.append(f" ({self.reasons[group]})")
+        if about:
+            prompt.append(f"  {about}", style="dim")
+        return prompt
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="picker"):
+            yield Static(f"groups for {self.host.name} ({self.inventory.name})", id="title")
+            yield Static(id="error-general", classes="error")
+            if not self.groups:
+                yield Static(
+                    f"{self.inventory.name} declares no groups; ari group NAME -i {self.inventory.name} declares one",
+                    id="empty",
+                )
+            yield SelectionList[str](
+                *(Selection(self._prompt(g), g, g in self.host.groups, id=g) for g in self.groups), id="groups"
+            )
+            with Horizontal(id="reason-row"):
+                yield Label("reason")
+                yield Select([(NO_REASON, NO_REASON)], value=NO_REASON, allow_blank=False, id="reason")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#error-general").display = False
+        self.query_one("#reason-row").display = False
+        self.query_one(SelectionList).focus()
+
+    def _reason_options(self, group: str) -> list[tuple[str, str]]:
+        declared = self.inventory.groups.get(group)
+        options = [("no reason", NO_REASON)]
+        options += [(f"{key}: {text}", key) for key, text in (declared.reasons.items() if declared else [])]
+        mine = self.reasons.get(group)
+        if mine and all(key != mine for _, key in options):
+            options.append((f"{mine} (not declared)", mine))
+        return options
+
+    def _follow(self, group: str | None) -> None:
+        """Point the reason picker at group, showing it only when that group is checked and has reasons to give."""
+        self.current = group
+        row = self.query_one("#reason-row")
+        checked = group is not None and group in self.query_one(SelectionList).selected
+        options = self._reason_options(group) if checked else []
+        row.display = len(options) > 1
+        if row.display:
+            select = self.query_one("#reason", Select)
+            with self.prevent(Select.Changed):
+                select.set_options(options)
+                select.value = self.reasons.get(group, NO_REASON)
+
+    def on_selection_list_selection_highlighted(self, event: SelectionList.SelectionHighlighted) -> None:
+        self._follow(event.selection.value)
+
+    def on_selection_list_selection_toggled(self, event: SelectionList.SelectionToggled) -> None:
+        group = event.selection.value
+        if group not in self.query_one(SelectionList).selected:
+            self.reasons.pop(group, None)  # leaving a group drops its reason, as --ungroup does
+            self.query_one(SelectionList).replace_option_prompt(group, self._prompt(group))
+        self._follow(group)
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if self.current is None:
+            return
+        if event.value == NO_REASON:
+            self.reasons.pop(self.current, None)
+        else:
+            self.reasons[self.current] = str(event.value)
+        self.query_one(SelectionList).replace_option_prompt(self.current, self._prompt(self.current))
+
+    def changes(self) -> core.Changes:
+        """The memberships that differ from the record, as ari edit --group and --ungroup would take them."""
+        picked = set(self.query_one(SelectionList).selected)
+        c = core.Changes()
+        c.ungroup = [g for g in self.host.groups if g not in picked]
+        for group in self.groups:
+            if group not in picked:
+                continue
+            reason = self.reasons.get(group) or None
+            if group not in self.host.groups or self.host.reasons.get(group) != reason:
+                c.groups.append((group, reason))
+        return c
+
+    def action_save(self) -> None:
+        c = self.changes()
+        if c.is_empty():
+            self.app.notify(f"no change to {self.host.name} ({self.inventory.name})")
+            self.dismiss(self.host.name)
+            return
+        try:
+            inventory, host, changed = core.edit_host(self.cfg, self.host.name, c, self.inventory.name)
+        except HostsError as e:
+            problems = e.problems if isinstance(e, core.HostRefused) else [core.Problem(None, str(e))]
+            error = self.query_one("#error-general", Static)
+            error.update("\n".join(p.message for p in problems))
+            error.display = True
+            return
+        self.app.notify(f"{'updated' if changed else 'no change to'} {host.name} ({inventory.name})")
+        self.dismiss(host.name)
+
+
 class HostList(Screen):
     """Every host in scope, narrowed by the filter the way ls --search narrows."""
 
@@ -287,6 +420,7 @@ class HostList(Screen):
         Binding("s", "ssh", "ssh"),
         Binding("a", "add", "Add"),
         Binding("e", "edit", "Edit"),
+        Binding("g", "groups", "Groups"),
         Binding("d", "delete", "Delete"),
         Binding("x", "export", "Export"),
         Binding("escape", "clear", "Clear filter", show=False),
@@ -384,19 +518,36 @@ class HostList(Screen):
         if row:
             self.app.ssh(row[1].name)
 
+    def _saved(self, name: str | None) -> None:
+        """After a form or the picker saves: read the inventories again, with the cursor on the host."""
+        self.reload(self.query_one(DataTable).cursor_row, prefer=name)
+        if name and name not in [h.name for _, h in self.shown]:
+            self.app.notify(f"the filter hides {name}")
+
     def _form(self, inventory: str, host: Host | None) -> None:
         try:
             inventories = core.load_all(self.cfg)
         except HostsError as e:
             self.app.notify(str(e), severity="error")
             return
+        self.app.push_screen(HostForm(self.cfg, inventories, inventory, host), self._saved)
 
-        def saved(name: str | None) -> None:
-            self.reload(self.query_one(DataTable).cursor_row, prefer=name)
-            if name and name not in [h.name for _, h in self.shown]:
-                self.app.notify(f"the filter hides {name}")
-
-        self.app.push_screen(HostForm(self.cfg, inventories, inventory, host), saved)
+    def action_groups(self) -> None:
+        row = self.selected()
+        if not row:
+            return
+        # The picker works from the record as it is on disk now, declared groups included.
+        try:
+            inventory = core.load_all(self.cfg)[row[0].name]
+        except HostsError as e:
+            self.app.notify(str(e), severity="error")
+            return
+        host = inventory.find(row[1].name)
+        if host is None:
+            self.app.notify(f"{row[1].name} is no longer in {inventory.name}", severity="error")
+            self.reload()
+            return
+        self.app.push_screen(GroupPicker(self.cfg, inventory, host), self._saved)
 
     def action_add(self) -> None:
         try:
@@ -459,7 +610,13 @@ class Browser(App):
     #form .row Input, #form .row Select { width: 1fr; }
     #form .row.tall TextArea { height: 6; width: 1fr; }
     #form .error { color: $error; padding: 0 0 0 14; }
-    #form #title { text-style: bold; padding: 0 0 1 0; }
+    #form #title, #picker #title { text-style: bold; padding: 0 0 1 0; }
+    #picker { padding: 1 2; }
+    #picker .error { color: $error; padding: 0 0 1 0; }
+    #picker SelectionList { height: 1fr; }
+    #reason-row { height: auto; padding: 1 0 0 0; }
+    #reason-row Label { width: 8; padding: 1 1 0 0; }
+    #reason-row Select { width: 1fr; }
     Confirm { align: center middle; }
     #dialog { width: auto; height: auto; padding: 1 3; border: thick $error; background: $surface; }
     """
