@@ -475,9 +475,9 @@ merged: new aliases, groups, options and
 missing notes are added.
 A value the source sets differently,
 whether HostName, User, Port,
-IdentityFile or an ssh option such as
-ProxyJump, is a conflict, and that host
-is left alone.
+IdentityFile, notes or an ssh option
+such as ProxyJump, is a conflict, and
+that host is left alone.
 Hosts that merged are saved even when
 others conflicted or were refused; the
 exit status is then 1.
@@ -489,6 +489,15 @@ Ansible\[aq]s \f[B]all.vars\f[R],
 otherwise to the user and key most hosts
 share.
 Each host stores only what differs.
+An inventory with hosts or defaults
+keeps its own, and a host that leaves a
+field to the source\[aq]s defaults takes
+the source\[aq]s value, stored where it
+differs from the inventory\[aq]s.
+A host already in the inventory whose
+value would change that way is a
+conflict, and the warning names the
+hosts that were given one.
 .PP
 A clean import adopts the files it read:
 their hashes go to the guard, so
@@ -585,6 +594,15 @@ and \f[B]description\f[R] become its
 fields, and group membership, child
 groups and the file each group came from
 carry over.
+\f[B]ansible_host\f[R] and
+\f[B]description\f[R] must be strings:
+YAML reads \f[V]ansible_host: no\f[R] as
+false, so a host like that is skipped
+and a description like that left out,
+each reported.
+A quoted \f[B]ansible_port\f[R] such as
+\f[V]\[dq]2222\[dq]\f[R] is the number,
+as Ansible reads it.
 Anything else is reported as not
 imported: other vars, group vars, and
 members that no hosts section defines.
@@ -597,6 +615,17 @@ When the inventory has no
 prints one to paste into config.toml,
 with each file\[aq]s groups listed by
 name.
+Export writes the hosts file with hosts
+only, so groups defined there get a file
+of their own in that table, named in a
+warning.
+The groups the source brings get the
+check \f[B]group\f[R] runs: if they
+would add a cycle or an undeclared
+child, the problem is refused, the
+inventory\[aq]s groups stay as they
+were, and so is every host in a group
+that didn\[aq]t get declared.
 .SS export [\f[I]MODULE\f[R] ...]
 .PP
 Write the output of every enabled module

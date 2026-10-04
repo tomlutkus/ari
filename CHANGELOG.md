@@ -6,6 +6,11 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 
 - ssh import reads a Host line with several names and no HostName as one host per name, each connecting to its own name, as ssh does. Before, the other names became aliases of the first and connected to it.
 - ssh import treats a HostName or Port that a block leaves out as not set when the host is already in the inventory, from a later block in the same file or on re-import. Such a block now adds its user, key, aliases or options instead of reporting a HostName conflict. A value set differently is still a conflict.
+- ansible import into an inventory that keeps its own defaults gives each host the source's `all.vars` for the fields it leaves unset, stored where they differ from the inventory's. Before, such a host followed the inventory's defaults. A host already in the inventory whose value would change is a conflict, and the warning names the hosts that were given the source's values.
+- ansible import skips a host whose `ansible_host` isn't a string, like `no`, which YAML reads as false and ari stored as `False`, and leaves out a `description` that isn't a string. A quoted `ansible_port` such as `"2222"` is read as the port instead of being left out.
+- ansible import gives groups defined in the hosts file a file of their own in the table it prints, so the first export with that table no longer refuses them.
+- ansible import runs the check `ari group` runs on the groups it brings. A cycle or an undeclared child is refused, the inventory's groups stay as they were, and only the hosts in a group that didn't get declared are refused with it. Before, a cycle was saved and every export stopped on it.
+- import treats a different non-empty note, Ansible's `description`, as a conflict, like a different HostName. Before, it was dropped without a word.
 
 ## 0.6.0 (2026-10-04)
 

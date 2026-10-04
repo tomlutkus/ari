@@ -274,6 +274,8 @@ class _Reader:
 
     def _field(self, field_name: str, value: Any, where: str) -> Any:
         if field_name == "port":
+            if isinstance(value, str) and re.fullmatch(r"[0-9]+", value):
+                value = int(value)  # a quoted port; Ansible takes it as the number
             try:
                 return check_port(value, where)
             except HostsError as e:
@@ -295,7 +297,11 @@ class _Reader:
         if not isinstance(data, dict):
             self._lose(f"{where}: host vars are not a mapping; host skipped")
             return
-        hostname = str(data.get("ansible_host", name))
+        hostname = data.get("ansible_host", name)
+        if not isinstance(hostname, str):
+            # YAML reads ansible_host: no as false; "False" would be an address nobody wrote.
+            self._lose(f"{where}: ansible_host {hostname!r} isn't a string; host skipped")
+            return
         if not hostname or any(c.isspace() for c in hostname):
             self._lose(f"{where}: ansible_host {hostname!r} has spaces; host skipped")
             return
@@ -304,7 +310,10 @@ class _Reader:
             if key == "ansible_host":
                 continue
             if key == "description":
-                host.notes = str(value) if value is not None else ""
+                if isinstance(value, str):
+                    host.notes = value
+                elif value is not None:
+                    self._lose(f"{where}: description {value!r} isn't a string; not imported")
             elif key in _VARS:
                 setattr(host, _VARS[key], self._field(_VARS[key], value, where))
             else:
@@ -371,7 +380,19 @@ class _Reader:
         for group, file in self.route.items():
             routes.setdefault(file, []).append(group)
         hosts_file = self.hosts_file or "00-hosts.yml"
-        routes.pop(hosts_file, None)
+        stray = routes.pop(hosts_file, [])
+        if stray:
+            # Export writes the hosts file with hosts only, so its groups need a file of their own.
+            taken = {path.name for path, _ in self.files} | set(routes)
+            stem, suffix = Path(hosts_file).stem, Path(hosts_file).suffix
+            file, n = f"{stem}-groups{suffix}", 2
+            while file in taken:
+                file, n = f"{stem}-groups-{n}{suffix}", n + 1
+            routes[file] = stray
+            self.warnings.append(
+                f"{hosts_file} defines groups as well as hosts ({', '.join(stray)}); export writes the hosts file with"
+                f" hosts only, so they need a file in the groups table, and the suggested one is {file}"
+            )
         settings: dict[str, Any] = {"dir": tilde(directory), "hosts": hosts_file}
         if routes:
             settings["groups"] = dict(sorted(routes.items()))

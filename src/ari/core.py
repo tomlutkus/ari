@@ -447,7 +447,7 @@ def _strip_defaults(inventory: Inventory, host: Host) -> None:
 def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | None:
     """What the source sets differently from the record. Merge only fills gaps, so anything
     returned here would otherwise be dropped while the report said nothing. A field the source
-    leaves unset, an empty hostname or no port, says nothing either way."""
+    leaves unset, an empty hostname, no port or no notes, says nothing either way."""
     if incoming.hostname and incoming.hostname != existing.hostname:
         return f"HostName {incoming.hostname} differs from {existing.hostname}"
     user = inventory.user(existing)
@@ -458,6 +458,8 @@ def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | N
     key = inventory.ssh_key(existing)
     if incoming.ssh_key and key and incoming.ssh_key != key:
         return f"IdentityFile {incoming.ssh_key} differs from {key}"
+    if incoming.notes and existing.notes and incoming.notes != existing.notes:
+        return f"notes {incoming.notes!r} differ from {existing.notes!r}"
     for name, data in incoming.modules.items():
         found = _module(name).conflicts(existing.modules.get(name, {}), data, inventory.defaults.modules.get(name, {}))
         if found:
@@ -523,24 +525,36 @@ def import_hosts(
     result.hosts = readable
 
     fresh = not target.hosts and target.defaults.is_empty()
+    differ = False
+    leaning: set[str] = set()  # hosts that took a source default the inventory's differs from
     if result.defaults is not None:
         # The source states its own defaults; hosts that leave a field unset inherit them there too.
+        d = result.defaults
         if fresh:
-            d = result.defaults
             target.defaults.user, target.defaults.port, target.defaults.ssh_key = d.user, d.port, d.ssh_key
             report.defaults_set = {k: str(v) for k, v in (("user", d.user), ("port", d.port), ("ssh_key", d.ssh_key)) if v is not None}
             report.defaults_from = "the source"
-        elif (result.defaults.user, result.defaults.port, result.defaults.ssh_key) != (
-            target.defaults.user,
-            target.defaults.port,
-            target.defaults.ssh_key,
-        ):
-            report.warnings.append("the source's defaults differ from the inventory's; kept the inventory's")
+        else:
+            # The inventory keeps its own, so each host gets what the source gave it: a host that
+            # leaves a field unset takes the source's default. Stored where it differs from the
+            # inventory's; on a host already here, a value that would change is a conflict.
+            mine = target.defaults
+            ours = {"user": mine.user, "port": mine.port or 22, "ssh_key": mine.ssh_key}
+            theirs = {"user": d.user, "port": d.port, "ssh_key": d.ssh_key}
+            differ = (d.user, d.port, d.ssh_key) != (mine.user, mine.port, mine.ssh_key)
+            for host in result.hosts:
+                for attr, value in theirs.items():
+                    if value is not None and getattr(host, attr) is None:
+                        setattr(host, attr, value)
+                        if value != ours[attr]:
+                            leaning.add(host.name)
     elif fresh:
         report.defaults_set = _infer_defaults(target, result.hosts)
     report.settings = result.settings
 
     groups_changed = False
+    previous = copy.deepcopy(target.groups)
+    before = _structure_problems(target)
     for name, group in result.groups.items():
         mine = target.groups.get(name)
         if mine is None:
@@ -558,6 +572,14 @@ def import_hosts(
             if key not in mine.reasons:
                 mine.reasons[key] = text
                 groups_changed = True
+    # The check ari group runs: only problems the source would add count. Any of them and the
+    # groups stay as they were; hosts in a group that never got declared are refused below.
+    added = [p for p in _structure_problems(target) if p not in before]
+    if added:
+        target.groups = previous
+        report.groups_added = []
+        groups_changed = False
+        report.refused += [f"{p}; the inventory's groups are kept as they were" for p in added]
 
     elsewhere = {
         token.casefold(): f"{inv.name}/{host.name}"
@@ -610,6 +632,13 @@ def import_hosts(
         candidate.last_updated = now()
         target.hosts = [candidate if h is existing else h for h in target.hosts]
         report.merged.append(host.name)
+
+    if differ:
+        pinned = [name for name in report.added + report.merged if name in leaning]
+        report.warnings.append(
+            "the source's defaults differ from the inventory's; kept the inventory's"
+            + (f", and pinned the source's on {', '.join(pinned)}" if pinned else "")
+        )
 
     if report.added or report.merged or report.defaults_set or report.groups_added or groups_changed:
         storage.save(target)

@@ -1,5 +1,6 @@
 import json
 import shutil
+from pathlib import Path
 import stat
 import subprocess
 
@@ -371,6 +372,140 @@ def test_import_merges_groups_into_hosts_from_ssh(home, tmp_path, capsys):
     jump = next(h for h in json.loads(work_json(home).read_text())["hosts"] if h["name"] == "jump")
     assert jump["aliases"] == ["192.0.2.150"]
     assert jump["groups"] == ["zone_mgmt", "monitoring_infra", "no_auto_update"]
+
+
+def test_reimporting_the_exported_files_is_unchanged(work, capsys):
+    assert run("export") == 0
+    capsys.readouterr()
+    assert run("import", "ansible", str(work / "ssh" / "ansible")) == 0
+    out = capsys.readouterr()
+    assert "conflict" not in out.err and "differ" not in out.err
+    assert "merged" not in out.out and "added" not in out.out and " unchanged" in out.out
+
+
+# Import: values the source states, read as Ansible reads them
+
+
+def hosts_yml(tmp_path, text):
+    directory = tmp_path / "src"
+    directory.mkdir(exist_ok=True)
+    (directory / "00-hosts.yml").write_text(text)
+    return str(directory)
+
+
+def record(home, name):
+    return next(h for h in json.loads(work_json(home).read_text())["hosts"] if h["name"] == name)
+
+
+def seeded(home, defaults=None, hosts=()):
+    """A work inventory that already exists, so import keeps its defaults."""
+    write_config(home, '[inventories.work.ssh]\npath = "SSH/20-work.conf"\n')
+    work_json(home).write_text(json.dumps({"version": 2, "defaults": defaults or {}, "hosts": list(hosts)}))
+
+
+def test_source_defaults_the_inventory_keeps_out_are_pinned_on_new_hosts(home, tmp_path, capsys):
+    seeded(home, {"user": "root"}, [{"name": "old", "hostname": "192.0.2.1", "user": "deploy"}])
+    source = hosts_yml(tmp_path, "all:\n  vars:\n    ansible_user: deploy\n    ansible_port: 2200\n  hosts:\n"
+                       "    a:\n      ansible_host: 192.0.2.10\n    b:\n      ansible_host: 192.0.2.11\n      ansible_user: root\n"
+                       "    old:\n      ansible_host: 192.0.2.1\n      ansible_port: 22\n")
+    assert run("-i", "work", "import", "ansible", source) == 0
+    err = capsys.readouterr().err
+    assert "the source's defaults differ from the inventory's; kept the inventory's, and pinned the source's on a, b" in err
+    assert (record(home, "a")["user"], record(home, "a")["port"]) == ("deploy", 2200)
+    assert "user" not in record(home, "b") and record(home, "b")["port"] == 2200
+    assert "port" not in record(home, "old")
+
+
+def test_a_source_default_that_would_change_a_host_conflicts(home, tmp_path, capsys):
+    seeded(home, {"user": "root"}, [{"name": "old", "hostname": "192.0.2.1"}])
+    source = hosts_yml(tmp_path, "all:\n  vars:\n    ansible_user: deploy\n  hosts:\n    old:\n      ansible_host: 192.0.2.1\n")
+    assert run("-i", "work", "import", "ansible", source) == 1
+    out = capsys.readouterr()
+    assert "conflict: old: User deploy differs from root; not merged" in out.err
+    assert "pinned" not in out.err
+    assert "user" not in record(home, "old")
+
+
+@pytest.mark.parametrize("value", ["no", "10", ""])
+def test_ansible_host_that_isnt_a_string_skips_the_host(tmp_path, value):
+    source = hosts_yml(tmp_path, f"all:\n  hosts:\n    a:\n      ansible_host: {value}\n    b:\n      ansible_host: 192.0.2.2\n")
+    result = AnsibleModule().read(source)
+    assert [h.name for h in result.hosts] == ["b"]
+    assert result.lossy and any("(a): ansible_host" in w and "host skipped" in w for w in result.warnings)
+
+
+def test_description_that_isnt_a_string_is_left_out(tmp_path):
+    source = hosts_yml(tmp_path, "all:\n  hosts:\n    a:\n      ansible_host: 192.0.2.1\n      description: yes\n"
+                       "    b:\n      ansible_host: 192.0.2.2\n      description:\n")
+    result = AnsibleModule().read(source)
+    assert [(h.name, h.notes) for h in result.hosts] == [("a", ""), ("b", "")]
+    assert result.lossy and any("(a): description True isn't a string; not imported" in w for w in result.warnings)
+    assert not any("(b)" in w for w in result.warnings)
+
+
+@pytest.mark.parametrize(
+    "value, port",
+    [('"2222"', 2222), ("'0222'", 222), ("0222", 146), ('"22x"', None), ('"70000"', None)],
+)
+def test_ports_read_as_ansible_reads_them(tmp_path, value, port):
+    """A quoted number is a port. An unquoted 0222 is YAML's octal 146, which Ansible reads too."""
+    source = hosts_yml(tmp_path, f"all:\n  hosts:\n    a:\n      ansible_host: 192.0.2.1\n      ansible_port: {value}\n")
+    result = AnsibleModule().read(source)
+    assert result.hosts[0].port == port
+    assert result.lossy == (port is None)
+
+
+def test_groups_in_the_hosts_file_get_a_file_of_their_own(home, tmp_path, capsys):
+    write_config(home, '[inventories.work.ssh]\npath = "SSH/20-work.conf"\n')
+    source = hosts_yml(tmp_path, "all:\n  hosts:\n    a:\n      ansible_host: 192.0.2.10\n  children:\n    web:\n      hosts:\n        a:\n")
+    assert run("-i", "work", "import", "ansible", source) == 0
+    out = capsys.readouterr()
+    assert "00-hosts.yml defines groups as well as hosts (web)" in out.err and "the suggested one is 00-hosts-groups.yml" in out.err
+    table = out.out[out.out.index("[inventories.work.ansible]"):]
+    assert '[inventories.work.ansible.groups]\n"00-hosts-groups.yml" = ["web"]' in table
+    config = home / "config" / "ari" / "config.toml"
+    config.write_text(config.read_text() + "\n" + table.replace("~", str(Path.home())))
+    assert run("export", "--force") == 0
+    assert "    web:\n      hosts:\n        a:\n" in (tmp_path / "src" / "00-hosts-groups.yml").read_text()
+    assert "children" not in (tmp_path / "src" / "00-hosts.yml").read_text()
+
+
+def test_the_suggested_group_file_never_takes_a_name_in_use(tmp_path):
+    source = hosts_yml(tmp_path, "all:\n  hosts:\n    a:\n  children:\n    web:\n      hosts:\n        a:\n")
+    (tmp_path / "src" / "00-hosts-groups.yml").write_text("all:\n  children:\n    db:\n")
+    assert AnsibleModule().read(source).settings["groups"] == {"00-hosts-groups-2.yml": ["web"], "00-hosts-groups.yml": ["db"]}
+
+
+def test_a_cycle_from_the_source_never_reaches_the_inventory(home, tmp_path, capsys):
+    seeded(home, hosts=[{"name": "old", "hostname": "192.0.2.1", "groups": ["base"]}])
+    data = json.loads(work_json(home).read_text())
+    data["groups"] = {"base": {"children": ["ga"]}, "ga": {}}
+    work_json(home).write_text(json.dumps(data))
+    before = json.loads(work_json(home).read_text())["groups"]
+    source = hosts_yml(tmp_path, "all:\n  hosts:\n    a:\n      ansible_host: 192.0.2.10\n    b:\n      ansible_host: 192.0.2.11\n"
+                       "  children:\n    ga:\n      children:\n        gb:\n    gb:\n      children:\n        base:\n      hosts:\n        a:\n")
+    assert run("-i", "work", "import", "ansible", source) == 1
+    err = capsys.readouterr().err
+    assert "refused: work: groups base > ga > gb > base form a cycle; the inventory's groups are kept as they were" in err
+    assert "refused: work (a): group 'gb' isn't declared" in err
+    assert "not adopted" in err
+    assert json.loads(work_json(home).read_text())["groups"] == before
+    assert [h["name"] for h in json.loads(work_json(home).read_text())["hosts"]] == ["b", "old"]
+    assert run("export") == 0
+
+
+def test_a_different_note_conflicts_and_an_empty_one_says_nothing(home, tmp_path, capsys):
+    seeded(home, hosts=[{"name": "a", "hostname": "192.0.2.1", "notes": "old note"}, {"name": "b", "hostname": "192.0.2.2"}])
+    source = hosts_yml(tmp_path, "all:\n  hosts:\n    a:\n      ansible_host: 192.0.2.1\n      description: new note\n"
+                       "    b:\n      ansible_host: 192.0.2.2\n      description: first note\n")
+    assert run("-i", "work", "import", "ansible", source) == 1
+    out = capsys.readouterr()
+    assert "conflict: a: notes 'new note' differ from 'old note'; not merged" in out.err
+    assert "1 merged (b)" in out.out
+    assert (record(home, "a")["notes"], record(home, "b")["notes"]) == ("old note", "first note")
+    source = hosts_yml(tmp_path, "all:\n  hosts:\n    a:\n      ansible_host: 192.0.2.1\n")
+    assert run("-i", "work", "import", "ansible", source) == 0
+    assert "1 unchanged (a)" in capsys.readouterr().out
 
 
 @pytest.mark.skipif(shutil.which("ansible-inventory") is None, reason="needs ansible-inventory")
