@@ -5,10 +5,11 @@ import stat
 import subprocess
 
 import pytest
+import yaml
 from rich.cells import cell_len
 from rich.console import Console
 
-from conftest import FIXTURES, PERSONAL_ONLY, copy_fixture, write_config
+from conftest import FIXTURES, PERSONAL_AND_WORK, PERSONAL_ONLY, copy_fixture, write_config, write_mixed
 from ari import cli, core
 from ari.cli import _fit_names, main
 from ari.config import STARTER, load_config
@@ -243,6 +244,75 @@ def test_ls_rows_never_wrap_on_account_of_groups(home, monkeypatch, capsys, widt
     assert len(rows) == 3
     for row in rows:
         assert ("+5" in row) if shown is None else (row.count("_with_a_long_name") == shown)
+
+
+def ls_columns(out: str) -> dict[str, dict[str, str]]:
+    """ls rows by name, cut at the header's column starts."""
+    lines = out.splitlines()
+    header = next(line for line in lines if line.lstrip().startswith("NAME"))
+    starts = [m.start() for m in re.finditer(r"\S+", header)]
+    labels = header.split()
+    rows = {}
+    for line in lines[lines.index(header) + 2 :]:
+        if not line.strip() or line.strip().endswith("hosts"):
+            continue
+        cells = [line[a:b].strip() for a, b in zip(starts, starts[1:] + [None])]
+        rows[cells[0]] = dict(zip(labels, cells))
+    return rows
+
+
+def test_ls_has_a_column_per_exporting_module(home, monkeypatch, capsys):
+    write_mixed(home)
+    monkeypatch.setattr(cli, "out", Console(width=200, highlight=False))
+    assert run("ls") == 0
+    rows = ls_columns(capsys.readouterr().out)
+    marks = {name: (row["SSH"], row["ANSIBLE"]) for name, row in rows.items()}
+    assert marks == {
+        "nas": ("✓", "·"),
+        "scratch": ("excluded", "·"),
+        "vault-01": ("✓", "✓"),
+        "web-01": ("✓", "✓"),
+        "fw": ("✓", "excluded"),
+    }
+    assert list(rows["nas"]) == ["NAME", "HOSTNAME", "USER", "PORT", "SSH", "ANSIBLE", "GROUPS", "INV"]
+    assert run("ls", "-i", "personal") == 0
+    assert list(ls_columns(capsys.readouterr().out)["nas"]) == ["NAME", "HOSTNAME", "USER", "PORT", "SSH", "GROUPS", "INV"]
+
+
+def test_a_mark_says_exactly_what_export_writes(home):
+    write_mixed(home)
+    assert run("export") == 0
+    ssh = "".join((home / "ssh" / f).read_text() for f in ("10-personal.conf", "20-work.conf"))
+    written = {
+        "ssh": set(re.findall(r"^Host (\S+)", ssh, re.M)),
+        "ansible": set(yaml.safe_load((home / "ssh" / "ansible" / "00-hosts.yml").read_text())["all"]["hosts"]),
+    }
+    cfg = load_config()
+    assert core.export_modules(cfg) == ["ssh", "ansible"]
+    for inventory, host in core.list_hosts(cfg):
+        for module, names in written.items():
+            reach = core.module_reach(cfg, inventory, host, module)
+            assert (host.name in names) == (reach is core.ModuleReach.WRITTEN), (host.name, module, reach)
+
+
+def test_a_parked_module_gets_no_column_and_reaches_no_host(home):
+    write_config(home, PERSONAL_AND_WORK)
+    (home / "config" / "ari" / "work.json").write_text(json.dumps({
+        "version": 2, "hosts": [{"name": "app", "hostname": "192.0.2.5"}],
+    }))
+    cfg = load_config()
+    assert core.export_modules(cfg) == ["ssh"]
+    [(inventory, host)] = core.list_hosts(cfg, "work")
+    assert core.module_reach(cfg, inventory, host, "ansible") is core.ModuleReach.OFF
+    assert core.module_reach(cfg, inventory, host, "ssh") is core.ModuleReach.WRITTEN
+
+
+def test_show_says_who_connects_when_no_user_is_set(personal, capsys, monkeypatch):
+    monkeypatch.setattr(core.getpass, "getuser", lambda: "someone")
+    assert run("add", "bare", "192.0.2.9") == 0
+    capsys.readouterr()
+    assert run("show", "bare") == 0
+    assert re.search(r"^user\s+someone  \(whoever connects\)", capsys.readouterr().out, re.M)
 
 
 def test_a_parked_module_does_not_block_export(both, capsys):

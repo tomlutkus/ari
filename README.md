@@ -22,16 +22,16 @@ $ ari -i work add web-02 203.0.113.11 --notes "front end" --group zone_app --gro
 added web-02 to work
 
 $ ari ls
- NAME         HOSTNAME         USER     PORT   GROUPS                     INV
- ─────────────────────────────────────────────────────────────────────────────────
- github.com   github.com       git        22   -                          personal
- laptop       192.0.2.11       tom        22   -                          personal
- nas          192.0.2.254      root       22   -                          personal
- vps          198.51.100.187   tom        22   -                          personal
- firewall     203.0.113.1      admin    2222   -                          work
- gw           203.0.113.129    admin    2222   zone_edge                  work
- web-01       203.0.113.10     deploy     22   zone_app, monitoring_web   work
- web-02       203.0.113.11     deploy     22   zone_app, monitoring_web   work
+ NAME         HOSTNAME         USER     PORT   SSH   ANSIBLE    GROUPS                     INV
+ ──────────────────────────────────────────────────────────────────────────────────────────────────
+ github.com   github.com       git        22   ✓     ·          -                          personal
+ laptop       192.0.2.11       tom        22   ✓     ·          -                          personal
+ nas          192.0.2.254      root       22   ✓     ·          -                          personal
+ vps          198.51.100.187   tom        22   ✓     ·          -                          personal
+ firewall     203.0.113.1      admin    2222   ✓     excluded   -                          work
+ gw           203.0.113.129    admin    2222   ✓     ✓          zone_edge                  work
+ web-01       203.0.113.10     deploy     22   ✓     ✓          zone_app, monitoring_web   work
+ web-02       203.0.113.11     deploy     22   ✓     ✓          zone_app, monitoring_web   work
 
 8 hosts
 

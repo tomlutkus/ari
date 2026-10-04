@@ -2,6 +2,11 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
+## Unreleased
+
+- `ari` with no command on a terminal opens a TUI: a table of every host, or of the inventory `-i` names, under a filter that narrows it as you type and matches what `ls --search` matches. `/` moves to the filter, Enter shows the host as `show` prints it, `s` runs ssh and comes back to the list when the session ends, `q` quits. Without a terminal, `ari` prints help as before. textual is a new dependency.
+- `ls` and the TUI have a column per module that writes files, headed by its name: `✓` when `export` writes the host there, `excluded` when the host lists the module in `exclude`, `·` when its inventory doesn't have the module on. In `ls` they sit between PORT and GROUPS.
+
 ## 0.5.0 (2026-10-04)
 
 - `ari init` writes a commented starter `config.toml` and prints where it went. It refuses when one exists, whatever it holds, and is the only time ari writes that file. `--help`, `--version` and `ari modules` run without a config.

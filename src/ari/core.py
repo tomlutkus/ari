@@ -1,9 +1,11 @@
 """Operations behind every command. No printing here: the CLI and the TUI both call these."""
 
 import copy
+import getpass
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 from . import storage
@@ -58,20 +60,94 @@ def _flatten(value: object) -> list[object]:
     return [value]
 
 
+def matches(inventory: Inventory, host: Host, text: str) -> bool:
+    """Whether text appears in anything a search looks through, ignoring case. Empty text matches every host."""
+    needle = text.casefold()
+    return any(needle in s.casefold() for s in _haystack(inventory, host))
+
+
 def list_hosts(
     cfg: Config, scope: str | None = None, search: str | None = None, group: str | None = None
 ) -> list[tuple[Inventory, Host]]:
     rows = []
-    needle = search.casefold() if search else None
     for ic in cfg.scope(scope):
         inventory = storage.load(ic)
         for host in inventory.hosts:
             if group and group not in host.groups:
                 continue
-            if needle and not any(needle in s.casefold() for s in _haystack(inventory, host)):
+            if search and not matches(inventory, host, search):
                 continue
             rows.append((inventory, host))
     return rows
+
+
+class ModuleReach(Enum):
+    """Whether export writes a host through a module. Each value is what ls and the TUI show."""
+
+    WRITTEN = "✓"
+    EXCLUDED = "excluded"  # the host lists the module in exclude
+    OFF = "·"  # the host's inventory doesn't have the module enabled
+
+
+def export_modules(cfg: Config, scope: str | None = None) -> list[str]:
+    """Modules that write files for at least one inventory in scope, in the order config.toml first names them."""
+    names: list[str] = []
+    for ic in cfg.scope(scope):
+        for mc in ic.enabled():
+            if mc.module.exports and mc.module.name not in names:
+                names.append(mc.module.name)
+    return names
+
+
+def module_reach(cfg: Config, inventory: Inventory, host: Host, module: str) -> ModuleReach:
+    """The rule export follows: the inventory has the module enabled and the host doesn't exclude it."""
+    mc = cfg.get(inventory.name).modules.get(module)
+    if mc is None or not mc.enabled or not mc.module.exports:
+        return ModuleReach.OFF
+    return ModuleReach.EXCLUDED if module in host.exclude else ModuleReach.WRITTEN
+
+
+@dataclass
+class Detail:
+    """One line of show: a label, its value, and a note after the value such as (default)."""
+
+    label: str
+    value: str
+    note: str = ""
+
+
+def host_details(inventory: Inventory, host: Host) -> list[Detail]:
+    """Every field of a host with its effective value, as show prints it and the TUI shows it."""
+
+    def inherited(label: str, own: object, effective: object) -> Detail:
+        if effective is None:
+            return Detail(label, "-")
+        return Detail(label, str(effective), "" if own is not None else "(default)")
+
+    user = inventory.user(host)
+    groups = [f"{g} ({host.reasons[g]})" if g in host.reasons else g for g in host.groups]
+    details = [
+        Detail("inventory", inventory.name),
+        Detail("name", host.name),
+        Detail("aliases", " ".join(host.aliases) or "-"),
+        Detail("hostname", host.hostname),
+        inherited("user", host.user, user) if user else Detail("user", getpass.getuser(), "(whoever connects)"),
+        inherited("port", host.port, inventory.port(host)),
+        inherited("ssh key", host.ssh_key, inventory.ssh_key(host)),
+        Detail("notes", host.notes or "-"),
+        Detail("groups", ", ".join(groups) or "-"),
+        Detail("exclude", ", ".join(host.exclude) or "-"),
+    ]
+    installed = registry().modules
+    for name in sorted(set(installed) | set(host.modules)):
+        if name in installed:
+            lines = installed[name].describe(inventory, host)
+        else:
+            lines = [f"{k} {v}" for k, v in host.modules[name].items()] + ["(module not installed)"]
+        if lines:
+            details.append(Detail(name, "\n".join(lines)))
+    details.append(Detail("updated", host.last_updated or "-"))
+    return details
 
 
 def _locate(cfg: Config, inventories: dict[str, Inventory], token: str, scope: str | None) -> tuple[Inventory, Host]:

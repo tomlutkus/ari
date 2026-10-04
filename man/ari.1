@@ -25,6 +25,9 @@ inventory from them
 .SH SYNOPSIS
 .PP
 \f[B]ari\f[R] [\f[B]-i\f[R]
+\f[I]INV\f[R]]
+.PP
+\f[B]ari\f[R] [\f[B]-i\f[R]
 \f[I]INV\f[R]] \f[I]COMMAND\f[R]
 [\f[I]ARGS\f[R]]
 .PP
@@ -90,8 +93,11 @@ something to edit.
 file it writes and refuses to overwrite
 one that changed since.
 .PP
-With no arguments, \f[B]ari\f[R] prints
-help.
+With no command on a terminal,
+\f[B]ari\f[R] opens a browser over the
+hosts; see \f[B]TUI\f[R].
+When input or output isn\[aq]t a
+terminal, it prints help instead.
 .SH THE NAME
 .PP
 \f[B]ari\f[R] is Turkish for bee.
@@ -142,6 +148,18 @@ List hosts across every inventory, or
 only the one named with \f[B]-i\f[R].
 User and port show effective values,
 with inventory defaults filled in.
+.PP
+Between PORT and GROUPS, each module
+that writes files for an inventory
+listed gets a column, headed by its
+name: \f[B]✓\f[R] when \f[B]export\f[R]
+writes the host there,
+\f[I]excluded\f[R] when the host lists
+that module in \f[B]exclude\f[R], and
+\f[B]·\f[R] when the host\[aq]s
+inventory doesn\[aq]t have the module
+on.
+A parked module gets no column.
 .PP
 GROUPS shows as many of a host\[aq]s
 groups as fit beside the other columns,
@@ -582,6 +600,75 @@ the last export, or never written by
 \f[B]ari\f[R]
 T}
 .TE
+.SH TUI
+.PP
+\f[B]ari\f[R] with no command, when
+input and output are both a terminal,
+opens a list of every host, or of the
+inventory \f[B]-i\f[R] names.
+It reads config.toml and the inventories
+before the screen changes, so a missing
+config, a broken inventory or an
+undeclared \f[B]-i\f[R] is an error, as
+for any command.
+.PP
+The list shows NAME, HOSTNAME, USER,
+INV, a column per module as in
+\f[B]ls\f[R], and GROUPS.
+The filter above it narrows the list as
+you type and matches what \f[B]ls
+--search\f[R] matches.
+The cursor stays on its host while the
+filter changes, as long as the host
+still matches.
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+Key
+T}@T{
+Action
+T}
+_
+T{
+\f[B]/\f[R]
+T}@T{
+Move to the filter.
+Letters typed there go into the filter,
+never to the keys below
+T}
+T{
+\f[B]Enter\f[R]
+T}@T{
+In the filter, back to the list.
+In the list, the selected host, as
+\f[B]show\f[R] prints it
+T}
+T{
+\f[B]Escape\f[R]
+T}@T{
+In the list or the filter, clear the
+filter.
+In a host\[aq]s details, back to the
+list
+T}
+T{
+\f[B]s\f[R]
+T}@T{
+\f[B]ssh\f[R] to the selected host, from
+the list or its details.
+The TUI hands the terminal to ssh and
+comes back when the session ends; if ssh
+fails to connect (exit 255), the TUI
+says so once it\[aq]s back
+T}
+T{
+\f[B]q\f[R]
+T}@T{
+Quit
+T}
+.TE
 .SH OPTIONS
 .PP
 .TS
@@ -618,7 +705,7 @@ T}
 one inventory: \f[B]-i\f[R], then
 \f[B]ARI_INVENTORY\f[R], then
 \f[B]default\f[R] from config.toml.
-\f[B]ls\f[R], \f[B]show\f[R],
+The TUI, \f[B]ls\f[R], \f[B]show\f[R],
 \f[B]export\f[R] and \f[B]group\f[R]
 without a name cover every inventory
 unless \f[B]-i\f[R] narrows them, and

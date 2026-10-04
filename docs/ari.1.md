@@ -12,6 +12,8 @@ ari - keep SSH hosts in one place and generate ssh config and Ansible inventory 
 
 # SYNOPSIS
 
+**ari** [**-i** *INV*]
+
 **ari** [**-i** *INV*] *COMMAND* [*ARGS*]
 
 **ari init**
@@ -44,7 +46,7 @@ Names and aliases are unique across all inventories, compared case-insensitively
 
 Generated files are output, not something to edit. **ari** records a hash of every file it writes and refuses to overwrite one that changed since.
 
-With no arguments, **ari** prints help.
+With no command on a terminal, **ari** opens a browser over the hosts; see **TUI**. When input or output isn't a terminal, it prints help instead.
 
 # THE NAME
 
@@ -69,6 +71,8 @@ Write a starter **config.toml** and print where it went. The starter declares on
 ## ls
 
 List hosts across every inventory, or only the one named with **-i**. User and port show effective values, with inventory defaults filled in.
+
+Between PORT and GROUPS, each module that writes files for an inventory listed gets a column, headed by its name: **✓** when **export** writes the host there, *excluded* when the host lists that module in **exclude**, and **·** when the host's inventory doesn't have the module on. A parked module gets no column.
 
 GROUPS shows as many of a host's groups as fit beside the other columns, in the order the host lists them, then +*N* for the rest, so a row never wraps on their account; **show** lists them all. Output to a pipe is laid out for 80 columns unless **COLUMNS** says otherwise.
 
@@ -160,6 +164,20 @@ Write the output of every enabled module of every inventory, or only the named m
 |-------|-------------|
 | **--force** | Overwrite files that were edited since the last export, or never written by **ari** |
 
+# TUI
+
+**ari** with no command, when input and output are both a terminal, opens a list of every host, or of the inventory **-i** names. It reads config.toml and the inventories before the screen changes, so a missing config, a broken inventory or an undeclared **-i** is an error, as for any command.
+
+The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and GROUPS. The filter above it narrows the list as you type and matches what **ls --search** matches. The cursor stays on its host while the filter changes, as long as the host still matches.
+
+| Key | Action |
+|-------|-------------|
+| **/** | Move to the filter. Letters typed there go into the filter, never to the keys below |
+| **Enter** | In the filter, back to the list. In the list, the selected host, as **show** prints it |
+| **Escape** | In the list or the filter, clear the filter. In a host's details, back to the list |
+| **s** | **ssh** to the selected host, from the list or its details. The TUI hands the terminal to ssh and comes back when the session ends; if ssh fails to connect (exit 255), the TUI says so once it's back |
+| **q** | Quit |
+
 # OPTIONS
 
 | Option | Meaning |
@@ -168,7 +186,7 @@ Write the output of every enabled module of every inventory, or only the named m
 | **-h**, **--help** | Show help for **ari** or for one command |
 | **--version** | Show the version |
 
-**add**, **import** and **group** *NAME* write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. **ls**, **show**, **export** and **group** without a name cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
+**add**, **import** and **group** *NAME* write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. The TUI, **ls**, **show**, **export** and **group** without a name cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
 
 # CONFIGURATION
 

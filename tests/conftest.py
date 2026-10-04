@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 
@@ -38,6 +39,53 @@ path = "SSH/20-work.conf"
 dir = "SSH/ansible"
 enabled = false
 """
+
+
+MIXED = """
+default = "personal"
+
+[inventories.personal.ssh]
+path = "SSH/10-personal.conf"
+
+[inventories.work.ssh]
+path = "SSH/20-work.conf"
+
+[inventories.work.ansible]
+dir = "SSH/ansible"
+zones = "zone_*"
+
+[inventories.work.ansible.groups]
+"10-zones.yml" = ["zone_*"]
+"70-lifecycle.yml" = ["no_auto_update"]
+"""
+
+
+def write_mixed(home):
+    """Two inventories, ssh in both and ansible in work, with a host excluded from each module."""
+    write_config(home, MIXED)
+    root = home / "config" / "ari"
+    (root / "personal.json").write_text(json.dumps({
+        "version": 2,
+        "defaults": {"user": "tom"},
+        "hosts": [
+            {"name": "nas", "hostname": "192.0.2.254", "aliases": ["storage"]},
+            {"name": "scratch", "hostname": "192.0.2.77", "exclude": ["ssh"]},
+        ],
+    }))
+    (root / "work.json").write_text(json.dumps({
+        "version": 2,
+        "defaults": {"user": "deploy", "port": 2222, "ssh_key": "~/.ssh/lab-ed25519"},
+        "groups": {
+            "zone_app": {"description": "app subnet (192.0.2.0/25)"},
+            "no_auto_update": {"reasons": {"secrets": "secrets and prod path"}},
+        },
+        "hosts": [
+            {"name": "vault-01", "hostname": "192.0.2.30", "groups": ["zone_app", "no_auto_update"],
+             "reasons": {"no_auto_update": "secrets"}},
+            {"name": "web-01", "hostname": "192.0.2.10", "user": "admin", "port": 22, "groups": ["zone_app"]},
+            {"name": "fw", "hostname": "203.0.113.1", "exclude": ["ansible"]},
+        ],
+    }))
 
 
 @pytest.fixture

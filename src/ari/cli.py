@@ -17,7 +17,6 @@ from . import __version__, core
 from .config import Config, load_config
 from .errors import HostsError
 from .guard import Status
-from .modules import registry
 from .paths import tilde
 
 out = Console(highlight=False)
@@ -58,9 +57,14 @@ def _fit_names(names: list[str], width: int) -> Text:
     return first + rest
 
 
-def _ls_table(rows: list, groups: list[Text]) -> Table:
+def _mark(cfg: Config, inventory, host, module: str) -> Text:
+    reach = core.module_reach(cfg, inventory, host, module)
+    return Text(reach.value, style="dim" if reach is core.ModuleReach.OFF else "")
+
+
+def _ls_table(cfg: Config, modules: list[str], rows: list, groups: list[Text]) -> Table:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
-    for column in ("NAME", "HOSTNAME", "USER", "PORT", "GROUPS", "INV"):
+    for column in ("NAME", "HOSTNAME", "USER", "PORT", *(m.upper() for m in modules), "GROUPS", "INV"):
         table.add_column(column, justify="right" if column == "PORT" else "left", no_wrap=column == "GROUPS")
     for (inventory, host), cell in zip(rows, groups):
         table.add_row(
@@ -68,6 +72,7 @@ def _ls_table(rows: list, groups: list[Text]) -> Table:
             Text(host.hostname),
             _user(inventory, host),
             Text(str(inventory.port(host))),
+            *(_mark(cfg, inventory, host, m) for m in modules),
             cell,
             Text(inventory.name, style="dim"),
         )
@@ -79,10 +84,11 @@ def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
     if not rows:
         out.print("no hosts")
         return 0
+    modules = core.export_modules(cfg, _inventory_arg(args))
     # GROUPS gets whatever width the other columns leave, so a row never wraps on its account.
-    bare = Measurement.get(out, out.options, _ls_table(rows, [Text("")] * len(rows))).maximum
+    bare = Measurement.get(out, out.options, _ls_table(cfg, modules, rows, [Text("")] * len(rows))).maximum
     width = out.width - (bare - len("GROUPS"))
-    out.print(_ls_table(rows, [_fit_names(host.groups, width) for _, host in rows]))
+    out.print(_ls_table(cfg, modules, rows, [_fit_names(host.groups, width) for _, host in rows]))
     out.print(Text(_plural(len(rows), "host"), style="dim"))
     return 0
 
@@ -92,36 +98,8 @@ def cmd_show(cfg: Config, args: argparse.Namespace) -> int:
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim")
     grid.add_column()
-
-    def inherited(own, effective) -> Text:
-        if effective is None:
-            return Text("-")
-        return Text(str(effective)) if own is not None else Text.assemble(str(effective), ("  (default)", "dim"))
-
-    user = inventory.user(host)
-    grid.add_row("inventory", Text(inventory.name))
-    grid.add_row("name", Text(host.name))
-    grid.add_row("aliases", Text(" ".join(host.aliases) or "-"))
-    grid.add_row("hostname", Text(host.hostname))
-    grid.add_row(
-        "user",
-        inherited(host.user, user) if user else Text.assemble(getpass.getuser(), ("  (whoever connects)", "dim")),
-    )
-    grid.add_row("port", inherited(host.port, inventory.port(host)))
-    grid.add_row("ssh key", inherited(host.ssh_key, inventory.ssh_key(host)))
-    grid.add_row("notes", Text(host.notes or "-"))
-    groups = [f"{g} ({host.reasons[g]})" if g in host.reasons else g for g in host.groups]
-    grid.add_row("groups", Text(", ".join(groups) or "-"))
-    grid.add_row("exclude", Text(", ".join(host.exclude) or "-"))
-    installed = registry().modules
-    for name in sorted(set(installed) | set(host.modules)):
-        if name in installed:
-            lines = installed[name].describe(inventory, host)
-        else:
-            lines = [f"{k} {v}" for k, v in host.modules[name].items()] + ["(module not installed)"]
-        if lines:
-            grid.add_row(name, Text("\n".join(lines)))
-    grid.add_row("updated", Text(host.last_updated or "-"))
+    for d in core.host_details(inventory, host):
+        grid.add_row(d.label, Text.assemble(d.value, (f"  {d.note}", "dim")) if d.note else Text(d.value))
     out.print(grid)
     return 0
 
@@ -440,14 +418,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _terminal() -> bool:
+    """Whether there's a terminal to draw the TUI on: input from one and output to one."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command is None:
-        # The TUI will live here; until then, and whenever stdout isn't a terminal, print help.
-        parser.print_help()
-        return 0
     try:
+        if args.command is None:
+            if not _terminal():
+                parser.print_help()
+                return 0
+            from . import tui  # textual loads only when the TUI opens
+
+            return tui.run(load_config(), _inventory_arg(args))
         # init writes the config and modules lists what's installed, so neither needs one.
         if args.func is cmd_init:
             return cmd_init(args)
