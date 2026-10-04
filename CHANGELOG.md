@@ -11,6 +11,9 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 - ansible import gives groups defined in the hosts file a file of their own in the table it prints, so the first export with that table no longer refuses them.
 - ansible import runs the check `ari group` runs on the groups it brings. A cycle or an undeclared child is refused, the inventory's groups stay as they were, and only the hosts in a group that didn't get declared are refused with it. Before, a cycle was saved and every export stopped on it.
 - import treats a different non-empty note, Ansible's `description`, as a conflict, like a different HostName. Before, it was dropped without a word.
+- `export` creates a missing directory 0755 when the files it holds are meant for others, like the Ansible inventory, and 0700 when they are private. It used to make every new directory 0700, which kept the 0644 Ansible files from everyone else. A directory that exists keeps its mode.
+- `export` writes every file beside its target before renaming any into place. A write that fails, on a full disk say, now leaves every target and the guard as they were. Before, the files written ahead of it stayed while the guard missed them, and the next export refused them as edited by hand.
+- An inventory file whose ssh options hold one keyword twice in different case no longer loads, and `export` refuses a host with an alias that is its own name in another case. Both can only come from editing the file by hand.
 
 ## 0.6.0 (2026-10-04)
 

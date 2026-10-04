@@ -158,7 +158,7 @@ With the **ansible** module, *SOURCE* is an inventory directory, and every **.ym
 
 ## export [*MODULE* ...]
 
-Write the output of every enabled module of every inventory, or only the named modules, or one inventory with **-i**. Validation and the guard check run first; if any fails, nothing is written. A file whose contents are already right is left alone, apart from its mode if that differs.
+Write the output of every enabled module of every inventory, or only the named modules, or one inventory with **-i**. Validation and the guard check run first; if any fails, nothing is written. Every file is then written beside its target before any is renamed into place, so a write that fails, on a full disk say, leaves every file and the guard as they were. A file whose contents are already right is left alone, apart from its mode if that differs.
 
 | Option | Meaning |
 |-------|-------------|
@@ -296,7 +296,7 @@ Every group a host uses is declared under **groups**, even as an empty `{}`, so 
 
 Data for a module that isn't installed is kept as it is, so removing a plugin never loses anything. A version 1 file, from ari 0.2, is upgraded when it's read and saved as version 2 on its next write.
 
-A file that fails to parse stops **ari** with the path and the error. It is never treated as empty.
+A file that fails to parse stops **ari** with the path and the error. It is never treated as empty. Two ssh options that differ only in case are one keyword to ssh, so a file that holds both doesn't load.
 
 # VALIDATION
 
@@ -304,13 +304,13 @@ A file that fails to parse stops **ari** with the path and the error. It is neve
 
 **group** checks the group it writes the same way: a new name is usable, every child is declared, children form no cycle, and nothing a host relies on is removed. Only problems the write would add stop it; one already elsewhere in the inventory doesn't.
 
-**export** checks every inventory it covers before writing anything. Beyond names, groups and reasons, every child group must be declared and children may not form a cycle. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table, and, when **zones** is set, every host it exports is in exactly one zone.
+**export** checks every inventory it covers before writing anything. Beyond names, groups and reasons, every child group must be declared, children may not form a cycle, and no alias may be its host's own name in another case. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table, and, when **zones** is set, every host it exports is in exactly one zone.
 
 # GENERATED SSH CONFIG
 
 Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, and **IdentityFile** with **IdentitiesOnly yes** when a key is set, followed by the host's other options. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
 
-Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file. The file gets mode 0600, as do the inventories.
+Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file. The file gets mode 0600, as do the inventories, and a directory **ari** creates for them gets 0700.
 
 # GENERATED ANSIBLE INVENTORY
 
@@ -320,7 +320,7 @@ Each file in the **groups** table holds the groups its globs match, in declarati
 
 Values are written plain when YAML reads them back unchanged, and double-quoted otherwise. The same inventory always produces the same bytes, so a diff of the generated files shows only real changes. Files in the directory that the **groups** table doesn't name are never touched.
 
-The files get mode 0644, so anyone who runs playbooks from the repository can read them.
+The files get mode 0644, so anyone who runs playbooks from the repository can read them, and a directory **ari** creates for them gets 0755. A directory that already exists keeps its mode.
 
 # FILES
 

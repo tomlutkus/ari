@@ -55,9 +55,13 @@ _OWN_FIELD = {"host": None, "match": None, "hostname": "hostname", "user": "user
 def _options_map(data: Any, where: str) -> dict[str, str]:
     if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
         raise HostsError(f"{where}: options must map ssh keywords to strings")
+    seen: dict[str, str] = {}
     for keyword, value in data.items():
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", keyword):
             raise HostsError(f"{where}: {keyword!r} isn't an ssh_config keyword")
+        first = seen.setdefault(keyword.casefold(), keyword)
+        if first != keyword:
+            raise HostsError(f"{where}: options {first} and {keyword} are one keyword to ssh, which reads them without case")
         if keyword.lower() in _OWN_FIELD:
             own = _OWN_FIELD[keyword.lower()]
             raise HostsError(f"{where}: {keyword} can't be an option" + (f"; it's the {own} field" if own else ""))

@@ -195,6 +195,9 @@ def name_problems(inventories: list[Inventory]) -> list[str]:
                 if key in owner and owner[key] != where:
                     problems.append(f"{token!r} is used by both {owner[key]} and {where}")
                 owner.setdefault(key, where)
+            for alias in host.aliases:
+                if alias.casefold() == host.name.casefold():
+                    problems.append(f"{where}: alias {alias!r} is the host's own name")
     return problems
 
 
@@ -979,13 +982,31 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
         ]
         raise _stopped(lines, "review the file, then rerun with --force")
 
-    for p, s in checked:
-        fixed = False
-        if s is Status.SAME:
-            fixed = storage.set_mode(p.path, p.mode)  # no write to carry the mode, so set it here
-        else:
-            storage.atomic_write(p.path, p.data, p.mode)
-        guard.record(p.path, p.data)
-        report.written.append(Written(p, s, fixed))
-    guard.save()
+    # Every temp first, then every rename, then the guard. A failure while writing leaves every
+    # target and the guard as they were. Past that point, the guard records exactly what landed.
+    staged = storage.Staged()
+    writing = None
+    try:
+        for p, s in checked:
+            if s is not Status.SAME:
+                writing = p
+                staged.add(p.path, p.data, p.mode)
+    except BaseException as e:
+        staged.cleanup()
+        if isinstance(e, OSError) and writing is not None:
+            where = Path(e.filename) if e.filename else writing.path
+            raise _stopped([f"{tilde(where)}: {e.strerror or e}"]) from None
+        raise
+    try:
+        for p, s in checked:
+            fixed = False
+            if s is Status.SAME:
+                fixed = storage.set_mode(p.path, p.mode)  # no write to carry the mode, so set it here
+            else:
+                staged.commit(p.path)
+            guard.record(p.path, p.data)
+            report.written.append(Written(p, s, fixed))
+    finally:
+        staged.cleanup()
+        guard.save()
     return report

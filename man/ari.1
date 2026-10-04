@@ -634,6 +634,11 @@ modules, or one inventory with
 \f[B]-i\f[R].
 Validation and the guard check run
 first; if any fails, nothing is written.
+Every file is then written beside its
+target before any is renamed into place,
+so a write that fails, on a full disk
+say, leaves every file and the guard as
+they were.
 A file whose contents are already right
 is left alone, apart from its mode if
 that differs.
@@ -1148,6 +1153,9 @@ A file that fails to parse stops
 \f[B]ari\f[R] with the path and the
 error.
 It is never treated as empty.
+Two ssh options that differ only in case
+are one keyword to ssh, so a file that
+holds both doesn\[aq]t load.
 .SH VALIDATION
 .PP
 \f[B]add\f[R] and \f[B]edit\f[R] check
@@ -1178,8 +1186,10 @@ inventory doesn\[aq]t.
 \f[B]export\f[R] checks every inventory
 it covers before writing anything.
 Beyond names, groups and reasons, every
-child group must be declared and
-children may not form a cycle.
+child group must be declared, children
+may not form a cycle, and no alias may
+be its host\[aq]s own name in another
+case.
 The \f[B]ansible\f[R] module adds its
 own rules: every declared group is a
 valid Ansible group name and matches
@@ -1211,7 +1221,9 @@ over it.
 matches the \f[V].tmp\f[R], so ssh never
 reads a half-written file.
 The file gets mode 0600, as do the
-inventories.
+inventories, and a directory
+\f[B]ari\f[R] creates for them gets
+0700.
 .SH GENERATED ANSIBLE INVENTORY
 .PP
 The hosts file gets \f[B]all.vars\f[R]
@@ -1260,7 +1272,10 @@ are never touched.
 .PP
 The files get mode 0644, so anyone who
 runs playbooks from the repository can
-read them.
+read them, and a directory \f[B]ari\f[R]
+creates for them gets 0755.
+A directory that already exists keeps
+its mode.
 .SH FILES
 .PP
 .TS

@@ -1,10 +1,13 @@
+import errno
 import json
 import shutil
+import stat
 import subprocess
 
 import pytest
 
-from conftest import FIXTURES
+from conftest import FIXTURES, MIXED, write_config, write_mixed
+from ari import storage
 from ari.cli import main
 
 
@@ -286,6 +289,105 @@ def test_export_refuses_undeclared_groups_and_bad_children(imported, capsys):
     assert "child 'c', which isn't declared" in err
     assert "groups a > b > a form a cycle" in err
     assert not (imported / "ssh" / "10-personal.conf").exists()
+
+
+def test_export_refuses_an_alias_that_is_the_hosts_own_name(imported, capsys):
+    path = inventory_path(imported)
+    data = json.loads(path.read_text())
+    data["hosts"][1]["aliases"].append(data["hosts"][1]["name"].upper())
+    path.write_text(json.dumps(data))
+    assert run("export") == 1
+    assert "personal/laptop: alias 'LAPTOP' is the host's own name" in capsys.readouterr().err
+
+
+# Export writes every file or none
+
+
+def generated(home):
+    return sorted(p for p in home.rglob("*") if p.is_file() and "config" not in p.parts)
+
+
+def snapshot(home):
+    return {p: (p.read_bytes(), stat.S_IMODE(p.stat().st_mode)) for p in generated(home)}
+
+
+def test_export_makes_each_missing_directory_for_what_it_holds(home):
+    write_mixed(home)
+    write_config(home, MIXED.replace("SSH/20-work.conf", "SSH/private/20-work.conf").replace("SSH/ansible", "SSH/repo/inventory"))
+    assert run("export") == 0
+    mode = lambda p: stat.S_IMODE(p.stat().st_mode)
+    assert mode(home / "ssh" / "repo" / "inventory") == 0o755
+    assert mode(home / "ssh" / "private") == 0o700
+    assert all(mode(p) == 0o644 for p in (home / "ssh" / "repo" / "inventory").iterdir())
+
+
+def test_export_never_changes_the_mode_of_an_existing_directory(home):
+    write_mixed(home)
+    (home / "ssh" / "ansible").mkdir(mode=0o750)
+    assert run("export") == 0
+    assert stat.S_IMODE((home / "ssh" / "ansible").stat().st_mode) == 0o750
+
+
+def change_every_file(home):
+    """A new port for a work host changes its ssh block and its line in the hosts file."""
+    assert run("edit", "vault-01", "--port", "2200") == 0
+
+
+def test_a_failed_write_changes_no_file_and_not_the_guard(home, monkeypatch, capsys):
+    write_mixed(home)
+    assert run("export") == 0
+    change_every_file(home)
+    before, guard = snapshot(home), (home / "state" / "ari" / "exports.json").read_bytes()
+    real = storage._write_temp
+
+    def full(tmp, data, mode):
+        if tmp.name == "00-hosts.yml.tmp":
+            raise OSError(errno.ENOSPC, "No space left on device", str(tmp))
+        real(tmp, data, mode)
+
+    monkeypatch.setattr(storage, "_write_temp", full)
+    capsys.readouterr()
+    assert run("export") == 1
+    err = capsys.readouterr().err
+    assert "export stopped, nothing written" in err and "00-hosts.yml.tmp: No space left on device" in err
+    assert snapshot(home) == before
+    assert (home / "state" / "ari" / "exports.json").read_bytes() == guard
+    monkeypatch.setattr(storage, "_write_temp", real)
+    assert run("export") == 0
+
+
+def test_a_failed_write_removes_a_directory_it_made(home, monkeypatch):
+    write_mixed(home)
+
+    def full(tmp, data, mode):
+        raise OSError(errno.EROFS, "Read-only file system", str(tmp))
+
+    monkeypatch.setattr(storage, "_write_temp", full)
+    assert run("export") == 1
+    assert not (home / "ssh" / "ansible").exists()
+    assert generated(home) == []
+
+
+def test_a_failed_rename_leaves_the_guard_matching_what_landed(home, monkeypatch, capsys):
+    write_mixed(home)
+    assert run("export") == 0
+    change_every_file(home)
+    real, calls = storage.Staged.commit, []
+
+    def commit(self, path, exclusive=False):
+        calls.append(path)
+        if len(calls) == 2:
+            raise OSError(errno.EIO, "Input/output error", str(path))
+        real(self, path, exclusive)
+
+    monkeypatch.setattr(storage.Staged, "commit", commit)
+    with pytest.raises(OSError):
+        run("export")
+    assert not [p for p in generated(home) if p.name.endswith(".tmp")]
+    monkeypatch.setattr(storage.Staged, "commit", real)
+    capsys.readouterr()
+    assert run("export") == 0
+    assert "edited since" not in capsys.readouterr().err
 
 
 @pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the ssh client")

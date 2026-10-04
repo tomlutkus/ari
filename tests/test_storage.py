@@ -1,4 +1,6 @@
+import errno
 import json
+import os
 import stat
 
 import pytest
@@ -25,6 +27,40 @@ def test_exclusive_write_never_replaces(tmp_path):
         storage.atomic_write(path, b"second", exclusive=True)
     assert path.read_bytes() == b"first"
     assert not (tmp_path / "config.toml.tmp").exists()
+
+
+def mode(path):
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def umask():
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
+def test_a_new_directory_takes_the_mode_its_files_need(tmp_path):
+    storage.atomic_write(tmp_path / "repo" / "inventory" / "00-hosts.yml", b"x", 0o644)
+    storage.atomic_write(tmp_path / "ssh" / "config.d" / "20-work.conf", b"x", 0o600)
+    assert mode(tmp_path / "repo" / "inventory") == 0o755
+    assert mode(tmp_path / "ssh" / "config.d") == 0o700
+    assert mode(tmp_path / "repo") == mode(tmp_path / "ssh") == 0o777 & ~umask()
+
+
+def test_an_existing_directory_keeps_its_mode(tmp_path):
+    (tmp_path / "inventory").mkdir(mode=0o700)
+    storage.atomic_write(tmp_path / "inventory" / "00-hosts.yml", b"x", 0o644)
+    assert mode(tmp_path / "inventory") == 0o700
+
+
+def test_a_failed_write_leaves_no_temp_and_no_directory(tmp_path, monkeypatch):
+    def full(fd):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(storage.os, "fsync", full)  # fails after the temp has bytes in it
+    with pytest.raises(OSError, match="No space"):
+        storage.atomic_write(tmp_path / "new" / "deeper" / "f.yml", b"data", 0o644)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_round_trip_sorts_and_protects(tmp_path):
@@ -83,6 +119,10 @@ def test_data_for_a_module_that_isnt_installed_survives(tmp_path):
         ('{"version": 2, "hosts": [{"name": "a", "hostname": "x", "exclude": ["Bad Name"]}]}', "isn't a module name"),
         ('{"version": 2, "hosts": [{"name": "a", "hostname": "x", "modules": {"ssh": {"options": 5}}}]}', "options must map"),
         ('{"version": 2, "hosts": [{"name": "a", "hostname": "x", "modules": {"ssh": {"bogus": 1}}}]}', "unknown keys"),
+        ('{"version": 2, "hosts": [{"name": "a", "hostname": "x", "modules": {"ssh": {"options": {"ProxyJump": "j", "proxyjump": "k"}}}}]}',
+         "options ProxyJump and proxyjump are one keyword"),
+        ('{"version": 2, "defaults": {"modules": {"ssh": {"options": {"Compression": "yes", "COMPRESSION": "no"}}}}}',
+         "options Compression and COMPRESSION are one keyword"),
     ],
 )
 def test_broken_files_fail_loudly(tmp_path, content, message):
