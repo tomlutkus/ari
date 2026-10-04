@@ -22,7 +22,7 @@ def stored(home, name, inventory="personal"):
 
 
 def declare_groups(home, groups, inventory="personal"):
-    """Groups are declared by hand in the inventory file; no command writes them yet."""
+    """Write groups straight into the inventory file, without ari group's checks."""
     path = inventory_path(home, inventory)
     data = json.loads(path.read_text()) if path.exists() else {"version": 2, "hosts": []}
     data["groups"] = groups

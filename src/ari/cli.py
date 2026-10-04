@@ -42,18 +42,18 @@ def _user(inventory, host) -> Text:
     return Text(user) if user else Text(getpass.getuser(), style="dim")
 
 
-def _groups_cell(groups: list[str], width: int) -> Text:
-    """As many groups as fit in width, in the order the host stores them, then +N for the rest."""
-    if not groups:
+def _fit_names(names: list[str], width: int) -> Text:
+    """As many names as fit in width, in the order given, then +N for the rest."""
+    if not names:
         return Text("-")
-    for shown in range(len(groups), 0, -1):
-        hidden = len(groups) - shown
-        text = ", ".join(groups[:shown]) + (f" +{hidden}" if hidden else "")
+    for shown in range(len(names), 0, -1):
+        hidden = len(names) - shown
+        text = ", ".join(names[:shown]) + (f" +{hidden}" if hidden else "")
         if cell_len(text) <= width:
             return Text(text)
-    # Not even the first group fits: cut it short and keep the count.
-    rest = f" +{len(groups) - 1}" if len(groups) > 1 else ""
-    first = Text(groups[0])
+    # Not even the first name fits: cut it short and keep the count.
+    rest = f" +{len(names) - 1}" if len(names) > 1 else ""
+    first = Text(names[0])
     first.truncate(max(width - len(rest), 1), overflow="ellipsis")
     return first + rest
 
@@ -82,7 +82,7 @@ def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
     # GROUPS gets whatever width the other columns leave, so a row never wraps on its account.
     bare = Measurement.get(out, out.options, _ls_table(rows, [Text("")] * len(rows))).maximum
     width = out.width - (bare - len("GROUPS"))
-    out.print(_ls_table(rows, [_groups_cell(host.groups, width) for _, host in rows]))
+    out.print(_ls_table(rows, [_fit_names(host.groups, width) for _, host in rows]))
     out.print(Text(_plural(len(rows), "host"), style="dim"))
     return 0
 
@@ -160,6 +160,68 @@ def cmd_edit(cfg: Config, args: argparse.Namespace) -> int:
 def cmd_rm(cfg: Config, args: argparse.Namespace) -> int:
     inventory, host = core.remove_host(cfg, args.name, _inventory_arg(args))
     out.print(f"removed {host.name} from {inventory.name}", soft_wrap=True)
+    return 0
+
+
+GROUP_COLUMNS = ("GROUP", "HOSTS", "CHILDREN", "REASONS", "ABOUT", "INV")
+
+
+def _group_table(rows: list[core.GroupRow], cells: list[tuple[Text, Text, Text]]) -> Table:
+    table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
+    for column in GROUP_COLUMNS:
+        table.add_column(column, no_wrap=True)
+    for row, (children, reasons, description) in zip(rows, cells):
+        hosts = Text(str(row.total))
+        if row.direct != row.total:
+            hosts.append(f" ({row.direct} direct)", style="dim")
+        table.add_row(Text(row.name), hosts, children, reasons, description, Text(row.inventory.name, style="dim"))
+    return table
+
+
+def _print_groups(rows: list[core.GroupRow]) -> None:
+    """GROUP, HOSTS and INV stay whole. CHILDREN, REASONS and ABOUT (the description's first line)
+    share what they leave, the widest giving way first, so a row never wraps."""
+    lists = [(row.group.children, list(row.group.reasons), row.group.description.partition("\n")[0]) for row in rows]
+    bare = Measurement.get(out, out.options, _group_table(rows, [(Text(""),) * 3] * len(rows))).maximum
+    floors = [len(h) for h in GROUP_COLUMNS[2:5]]
+    room = out.width - bare + sum(floors)
+    give = [
+        max(floor, *(cell_len(", ".join(c[i]) if i < 2 else c[i]) for c in lists))
+        for i, floor in enumerate(floors)
+    ]
+    while sum(give) > room and any(g > f for g, f in zip(give, floors)):
+        widest = max((i for i in range(3) if give[i] > floors[i]), key=lambda i: give[i])
+        give[widest] -= 1
+    cells = []
+    for children, reasons, description in lists:
+        text = Text(description or "-", style="dim")
+        text.truncate(give[2], overflow="ellipsis")
+        cells.append((_fit_names(children, give[0]), _fit_names(reasons, give[1]), text))
+    out.print(_group_table(rows, cells))
+
+
+def cmd_group(cfg: Config, args: argparse.Namespace) -> int:
+    changes = core.GroupChanges(
+        description=args.description, children=args.child, unchild=args.unchild, reasons=args.reason, remove=args.rm
+    )
+    if args.name is None:
+        if changes != core.GroupChanges():
+            raise HostsError("--description, --child, --unchild, --reason and --rm need a group NAME")
+        rows = core.list_groups(cfg, _inventory_arg(args))
+        if not rows:
+            out.print("no groups")
+            return 0
+        _print_groups(rows)
+        out.print(Text(_plural(len(rows), "group"), style="dim"))
+        return 0
+    inventory, status = core.write_group(cfg, cfg.select(_inventory_arg(args)).name, args.name, changes)
+    done = {
+        "declared": f"declared {args.name} in {inventory.name}",
+        "updated": f"updated {args.name} ({inventory.name})",
+        "unchanged": f"no change to {args.name} ({inventory.name})",
+        "removed": f"removed {args.name} from {inventory.name}",
+    }
+    out.print(done[status], soft_wrap=True)
     return 0
 
 
@@ -342,6 +404,22 @@ def build_parser() -> argparse.ArgumentParser:
     rm = sub.add_parser("rm", parents=[common], help="remove a host")
     rm.add_argument("name", metavar="NAME", help="host name or alias")
     rm.set_defaults(func=cmd_rm)
+
+    grp = sub.add_parser("group", parents=[common], help="list groups, or declare, change or remove one")
+    grp.add_argument("name", metavar="NAME", nargs="?", help="group to declare or change; without it, list groups")
+    grp.add_argument("--description", metavar="TEXT", help="a zone's section header, further lines below it; '' clears it")
+    grp.add_argument("--child", metavar="GROUP", action="append", default=[], help="add a child group; repeatable")
+    grp.add_argument("--unchild", metavar="GROUP", action="append", default=[], help="drop a child group; repeatable")
+    grp.add_argument(
+        "--reason",
+        metavar="KEY=TEXT",
+        action="append",
+        default=[],
+        type=_key_value,
+        help="add or change a reason hosts can give; KEY= removes it; repeatable",
+    )
+    grp.add_argument("--rm", action="store_true", help="remove the group")
+    grp.set_defaults(func=cmd_group)
 
     mods = sub.add_parser("modules", parents=[common], help="list installed modules and where they're on")
     mods.set_defaults(func=cmd_modules)

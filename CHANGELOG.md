@@ -7,6 +7,7 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 - `ari init` writes a commented starter `config.toml` and prints where it went. It refuses when one exists, whatever it holds, and is the only time ari writes that file. `--help`, `--version` and `ari modules` run without a config.
 - `edit --unalias ALIAS`, repeatable, drops an alias. It runs before `--alias`, so `--unalias old --alias new` swaps one for the other. Naming an alias the host doesn't have is an error.
 - `ls` keeps each host on one line. GROUPS shows as many groups as fit beside the other columns, then `+N` for the rest, instead of wrapping; `show` lists them all.
+- `ari group` lists the declared groups with how many hosts each holds, the ones its children bring included. `ari group NAME` declares or changes one with `--description`, `--child`, `--unchild`, `--reason KEY=TEXT` (`KEY=` removes it) and `--rm`. Nothing a host relies on can go: removing a group, a child or a reason still in use is refused, naming the hosts and how they get there. The error for an undeclared group now gives the command that declares it.
 
 ## 0.4.1 (2026-10-04)
 

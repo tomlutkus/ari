@@ -10,7 +10,7 @@ from rich.console import Console
 
 from conftest import FIXTURES, PERSONAL_ONLY, copy_fixture, write_config
 from ari import cli, core
-from ari.cli import _groups_cell, main
+from ari.cli import _fit_names, main
 from ari.config import STARTER, load_config
 from ari.modules import registry
 from ari.modules.ssh import SshModule
@@ -220,13 +220,13 @@ def test_search_finds_the_port_ls_shows(home, capsys):
     assert rows["inherits"][3] == "2222" and "own" not in rows
 
 
-def test_groups_cell_fits_what_it_can_and_counts_the_rest():
+def test_fit_names_fits_what_it_can_and_counts_the_rest():
     groups = ["zone_app", "monitoring_db", "no_auto_update"]
-    assert _groups_cell([], 20).plain == "-"
-    assert _groups_cell(groups, 100).plain == "zone_app, monitoring_db, no_auto_update"
-    assert _groups_cell(groups, 30).plain == "zone_app, monitoring_db +1"
-    assert _groups_cell(groups, 12).plain == "zone_app +2"
-    assert _groups_cell(groups, 8).plain == "zone… +2"
+    assert _fit_names([], 20).plain == "-"
+    assert _fit_names(groups, 100).plain == "zone_app, monitoring_db, no_auto_update"
+    assert _fit_names(groups, 30).plain == "zone_app, monitoring_db +1"
+    assert _fit_names(groups, 12).plain == "zone_app +2"
+    assert _fit_names(groups, 8).plain == "zone… +2"
 
 
 @pytest.mark.parametrize("width, shown", [(80, None), (300, 6)])

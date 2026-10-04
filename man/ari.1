@@ -44,6 +44,9 @@ inventory from them
 .PP
 \f[B]ari rm\f[R] \f[I]NAME\f[R]
 .PP
+\f[B]ari group\f[R] [\f[I]NAME\f[R]
+[\f[I]OPTIONS\f[R]]]
+.PP
 \f[B]ari modules\f[R]
 .PP
 \f[B]ari import\f[R] \f[I]MODULE\f[R]
@@ -328,6 +331,101 @@ Remove a host, found by name or alias,
 from whichever inventory holds it.
 \f[B]-i\f[R] narrows the search.
 Its group memberships go with it.
+.SS group [\f[I]NAME\f[R]]
+.PP
+Without \f[I]NAME\f[R], list the
+declared groups of every inventory, or
+only the one named with \f[B]-i\f[R], in
+the order they\[aq]re declared.
+HOSTS counts a group\[aq]s hosts as
+Ansible sees them: the ones that list it
+and the ones any group below it holds,
+with the direct count beside it when
+children bring more.
+CHILDREN, REASONS and ABOUT, the
+description\[aq]s first line, share the
+width the other columns leave and never
+wrap.
+.PP
+With \f[I]NAME\f[R], declare that group
+in one inventory, \f[B]-i\f[R], then
+\f[B]ARI_INVENTORY\f[R], then
+\f[B]default\f[R] from config.toml, or
+change it if it\[aq]s declared already.
+A new name needs at least one character
+and no spaces or colons, so
+\f[B]--group\f[R]
+\f[I]GROUP\f[R][:\f[I]REASON\f[R]] can
+name it.
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+Option
+T}@T{
+Meaning
+T}
+_
+T{
+\f[B]--description\f[R] \f[I]TEXT\f[R]
+T}@T{
+A zone\[aq]s section header in the hosts
+file; further lines become comments
+under it.
+\f[B]\[aq]\[aq]\f[R] clears it
+T}
+T{
+\f[B]--child\f[R] \f[I]GROUP\f[R]
+T}@T{
+Add a declared group as a child;
+repeatable
+T}
+T{
+\f[B]--unchild\f[R] \f[I]GROUP\f[R]
+T}@T{
+Drop a child; repeatable, and runs
+before \f[B]--child\f[R]
+T}
+T{
+\f[B]--reason\f[R]
+\f[I]KEY\f[R]=\f[I]TEXT\f[R]
+T}@T{
+Add a reason hosts can give for being in
+the group, or change its text;
+\f[I]KEY\f[R]= removes it; repeatable
+T}
+T{
+\f[B]--rm\f[R]
+T}@T{
+Remove the group; takes no other option
+T}
+.TE
+.PP
+Nothing a host relies on can go.
+\f[B]--rm\f[R] is refused while any host
+is in the group, directly or through a
+child, or while another group lists it
+as a child.
+\f[B]--unchild\f[R] is refused when the
+parent would lose a host it reaches only
+through that child.
+Removing a reason is refused while a
+host gives it.
+Each refusal names the hosts and how
+they get there, and nothing is saved.
+.PP
+The other checks match \f[B]add\f[R] and
+\f[B]edit\f[R]: every child is declared,
+children form no cycle, and every
+problem is listed at once.
+Dropping a child or a reason the group
+doesn\[aq]t have is an error.
+A command that changes nothing saves
+nothing.
+\f[B]export\f[R] still applies each
+module\[aq]s own rules, such as which
+Ansible file a group is routed to.
 .SS modules
 .PP
 List the installed modules, whether each
@@ -515,12 +613,14 @@ Show the version
 T}
 .TE
 .PP
-\f[B]add\f[R] and \f[B]import\f[R] write
-to one inventory: \f[B]-i\f[R], then
+\f[B]add\f[R], \f[B]import\f[R] and
+\f[B]group\f[R] \f[I]NAME\f[R] write to
+one inventory: \f[B]-i\f[R], then
 \f[B]ARI_INVENTORY\f[R], then
 \f[B]default\f[R] from config.toml.
-\f[B]ls\f[R], \f[B]show\f[R] and
-\f[B]export\f[R] cover every inventory
+\f[B]ls\f[R], \f[B]show\f[R],
+\f[B]export\f[R] and \f[B]group\f[R]
+without a name cover every inventory
 unless \f[B]-i\f[R] narrows them, and
 \f[B]edit\f[R] and \f[B]rm\f[R] find the
 host wherever it is.
@@ -575,8 +675,9 @@ _
 T{
 \f[B]default\f[R]
 T}@T{
-Inventory used by \f[B]add\f[R] and
-\f[B]import\f[R] when \f[B]-i\f[R] and
+Inventory used by \f[B]add\f[R],
+\f[B]import\f[R] and \f[B]group\f[R]
+\f[I]NAME\f[R] when \f[B]-i\f[R] and
 \f[B]ARI_INVENTORY\f[R] are unset
 T}
 T{
@@ -771,8 +872,8 @@ Every group a host uses is declared
 under \f[B]groups\f[R], even as an empty
 \f[V]{}\f[R], so a typo fails instead of
 creating a group.
-No command declares groups yet; edit the
-file.
+\f[B]ari group\f[R] declares and changes
+them.
 A declaration takes three optional keys:
 \f[B]description\f[R], whose first line
 is a zone\[aq]s section header in the
@@ -947,9 +1048,10 @@ _
 T{
 \f[B]ARI_INVENTORY\f[R]
 T}@T{
-Inventory for \f[B]add\f[R] and
-\f[B]import\f[R] when \f[B]-i\f[R] is
-not given
+Inventory for \f[B]add\f[R],
+\f[B]import\f[R] and \f[B]group\f[R]
+\f[I]NAME\f[R] when \f[B]-i\f[R] is not
+given
 T}
 T{
 \f[B]XDG_CONFIG_HOME\f[R]
@@ -989,6 +1091,16 @@ ssh-only hosts beside it:
 \f[C]
 ari import ansible \[ti]/work/infra/ansible/inventory -i work
 ari import ssh \[ti]/.ssh/config.d/20-work.conf -i work --exclude ansible
+\f[R]
+.fi
+.PP
+Declare a zone with its header, and a
+group with a reason hosts can give:
+.IP
+.nf
+\f[C]
+ari -i work group zone_app --description \[aq]app subnet (192.0.2.0/25)\[aq]
+ari -i work group no_auto_update --reason \[aq]secrets=secrets and prod path\[aq]
 \f[R]
 .fi
 .PP

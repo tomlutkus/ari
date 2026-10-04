@@ -1,6 +1,7 @@
 """Operations behind every command. No printing here: the CLI and the TUI both call these."""
 
 import copy
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,7 +10,7 @@ from . import storage
 from .config import STARTER, Config
 from .errors import HostsError
 from .guard import Guard, Status
-from .models import MODULE_NAME, Host, Inventory, now
+from .models import MODULE_NAME, GroupDef, Host, Inventory, now
 from .modules import Module, registry
 from .paths import config_file, tilde
 
@@ -127,9 +128,7 @@ def _membership_problems(inventory: Inventory, host: Host) -> list[str]:
     problems = []
     for group in host.groups:
         if group not in inventory.groups:
-            problems.append(
-                f'{where}: group {group!r} isn\'t declared; add "{group}": {{}} under groups in {tilde(inventory.path)}'
-            )
+            problems.append(f"{where}: group {group!r} isn't declared; ari group {group} -i {inventory.name} declares it")
     for group, reason in host.reasons.items():
         if group not in host.groups:
             problems.append(f"{where}: has a reason for {group!r} without being in it")
@@ -140,7 +139,12 @@ def _membership_problems(inventory: Inventory, host: Host) -> list[str]:
 
 
 def group_problems(inventory: Inventory) -> list[str]:
-    problems = [p for host in inventory.hosts for p in _membership_problems(inventory, host)]
+    return [p for host in inventory.hosts for p in _membership_problems(inventory, host)] + _structure_problems(inventory)
+
+
+def _structure_problems(inventory: Inventory) -> list[str]:
+    """Every child is declared, and children form no cycle."""
+    problems = []
     groups = inventory.groups
     for name, group in groups.items():
         for child in group.children:
@@ -167,6 +171,149 @@ def group_problems(inventory: Inventory) -> list[str]:
         if name not in finished:
             walk(name, [name])
     return problems
+
+
+# Groups
+
+
+@dataclass
+class GroupRow:
+    inventory: Inventory
+    name: str
+    group: GroupDef
+    direct: int  # hosts that list the group
+    total: int  # those plus the hosts its children bring, as Ansible counts them
+
+
+def _reach(inventory: Inventory, groups: dict[str, GroupDef], name: str, trail: tuple[str, ...] = ()) -> set[str]:
+    """A group's hosts as Ansible sees them: the ones that list it, and the ones any group below it holds."""
+    found = {h.name for h in inventory.hosts if name in h.groups}
+    for child in groups[name].children if name in groups else ():
+        if child in groups and child != name and child not in trail:
+            found |= _reach(inventory, groups, child, (*trail, name))
+    return found
+
+
+def _hosts(inventory: Inventory, names: set[str] | list[str], how: str = "") -> str:
+    """A count, how the hosts got there, then their names in inventory order: '2 hosts through 'x': a, b'."""
+    ordered = [h.name for h in inventory.hosts if h.name in names]
+    return f"{len(ordered)} host{'s' if len(ordered) != 1 else ''}{how}: {', '.join(ordered)}"
+
+
+def list_groups(cfg: Config, scope: str | None = None) -> list[GroupRow]:
+    """Declared groups in declaration order, every inventory unless scope names one."""
+    rows = []
+    for ic in cfg.scope(scope):
+        inventory = storage.load(ic)
+        for name, group in inventory.groups.items():
+            direct = sum(name in h.groups for h in inventory.hosts)
+            rows.append(GroupRow(inventory, name, group, direct, len(_reach(inventory, inventory.groups, name))))
+    return rows
+
+
+@dataclass
+class GroupChanges:
+    """What ari group changes. A description of None leaves it alone and '' clears it; a reason with
+    empty text is removed. Values arrive as strings, as with Changes."""
+
+    description: str | None = None
+    children: list[str] = field(default_factory=list)
+    unchild: list[str] = field(default_factory=list)
+    reasons: list[tuple[str, str]] = field(default_factory=list)
+    remove: bool = False
+
+
+_BAD_GROUP_NAME = re.compile(r"[\s:]")
+
+
+def _removal_problems(inventory: Inventory, name: str) -> list[str]:
+    """A group can go only when no host is in it, directly or through a child, and no group lists it as a child."""
+    where = f"{inventory.name}: group {name!r}"
+    groups = inventory.groups
+    problems = []
+    direct = [h.name for h in inventory.hosts if name in h.groups]
+    if direct:
+        problems.append(f"{where} still has {_hosts(inventory, direct)}")
+    seen = set(direct)
+    for child in groups[name].children:
+        if child in groups and child != name:
+            via = _reach(inventory, groups, child, (name,)) - seen
+            if via:
+                problems.append(f"{where} still has {_hosts(inventory, via, f' through its child {child!r}')}")
+            seen |= via
+    parents = [repr(p) for p, g in groups.items() if name in g.children and p != name]
+    if parents:
+        problems.append(f"{where} is a child of {', '.join(parents)}; --unchild it there first")
+    return problems
+
+
+def write_group(cfg: Config, inventory_name: str, name: str, c: GroupChanges) -> tuple[Inventory, str]:
+    """Declare, change or remove one group. Returns the inventory and declared, updated, unchanged or
+    removed. Nothing is saved if any check fails, and every problem is listed."""
+    inventory = storage.load(cfg.get(inventory_name))
+    existing = inventory.groups.get(name)
+    if c.remove:
+        if c != GroupChanges(remove=True):
+            raise HostsError("--rm takes no other options")
+        if existing is None:
+            raise HostsError(f"no group {name!r} in {inventory.name}")
+        problems = _removal_problems(inventory, name)
+        if problems:
+            raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+        del inventory.groups[name]
+        storage.save(inventory)
+        return inventory, "removed"
+
+    where = f"{inventory.name}: group {name!r}"
+    problems = []
+    if existing is None and (not name or _BAD_GROUP_NAME.search(name)):
+        problems.append(f"{inventory.name}: {name!r} can't be a group name: it needs a character, and no spaces or colons")
+    group = copy.deepcopy(existing) if existing else GroupDef()
+    if c.description is not None:
+        group.description = c.description
+    for child in c.unchild:  # removals first, as with --unalias
+        if child in group.children:
+            group.children.remove(child)
+        else:
+            problems.append(f"{where} has no child {child!r}")
+    for child in c.children:
+        if child not in group.children:
+            group.children.append(child)
+    for key, text in c.reasons:
+        if text:
+            group.reasons[key] = text
+        elif key in group.reasons:
+            del group.reasons[key]
+        else:
+            problems.append(f"{where} has no reason {key!r} to remove")
+
+    after = copy.copy(inventory)
+    after.groups = {**inventory.groups, name: group}
+    if existing is not None:
+        # Cutting a child takes the parent away from every host it reached only through that child.
+        lost = _reach(inventory, inventory.groups, name) - _reach(after, after.groups, name)
+        for child in existing.children:
+            via = lost & _reach(inventory, inventory.groups, child, (name,))
+            if via and child not in group.children:
+                problems.append(f"{where} would lose {_hosts(inventory, via, f' it reaches only through {child!r}')}")
+                lost -= via
+        for key in existing.reasons:
+            users = [h.name for h in inventory.hosts if h.reasons.get(name) == key]
+            if key not in group.reasons and users:
+                problems.append(f"{where}: reason {key!r} is still used by {_hosts(inventory, users)}")
+    before = _structure_problems(inventory)
+    problems += [p for p in _structure_problems(after) if p not in before]
+    try:
+        Inventory.from_dict(after.to_dict(), name=after.name, path=after.path)
+    except HostsError as e:
+        problems.append(str(e))
+    if problems:
+        raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+    if existing is not None and group == existing:
+        return inventory, "unchanged"
+    inventory.groups[name] = group
+    storage.save(inventory)
+    return inventory, "declared" if existing is None else "updated"
 
 
 # Import

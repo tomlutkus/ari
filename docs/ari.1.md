@@ -26,6 +26,8 @@ ari - keep SSH hosts in one place and generate ssh config and Ansible inventory 
 
 **ari rm** *NAME*
 
+**ari group** [*NAME* [*OPTIONS*]]
+
 **ari modules**
 
 **ari import** *MODULE* [*SOURCE*] [**--exclude** *MODULE*]
@@ -112,6 +114,24 @@ An empty value clears a field: **--user ''**, **--port ''** and **--key ''** go 
 
 Remove a host, found by name or alias, from whichever inventory holds it. **-i** narrows the search. Its group memberships go with it.
 
+## group [*NAME*]
+
+Without *NAME*, list the declared groups of every inventory, or only the one named with **-i**, in the order they're declared. HOSTS counts a group's hosts as Ansible sees them: the ones that list it and the ones any group below it holds, with the direct count beside it when children bring more. CHILDREN, REASONS and ABOUT, the description's first line, share the width the other columns leave and never wrap.
+
+With *NAME*, declare that group in one inventory, **-i**, then **ARI_INVENTORY**, then **default** from config.toml, or change it if it's declared already. A new name needs at least one character and no spaces or colons, so **--group** *GROUP*[:*REASON*] can name it.
+
+| Option | Meaning |
+|-------|-------------|
+| **--description** *TEXT* | A zone's section header in the hosts file; further lines become comments under it. **''** clears it |
+| **--child** *GROUP* | Add a declared group as a child; repeatable |
+| **--unchild** *GROUP* | Drop a child; repeatable, and runs before **--child** |
+| **--reason** *KEY*=*TEXT* | Add a reason hosts can give for being in the group, or change its text; *KEY*= removes it; repeatable |
+| **--rm** | Remove the group; takes no other option |
+
+Nothing a host relies on can go. **--rm** is refused while any host is in the group, directly or through a child, or while another group lists it as a child. **--unchild** is refused when the parent would lose a host it reaches only through that child. Removing a reason is refused while a host gives it. Each refusal names the hosts and how they get there, and nothing is saved.
+
+The other checks match **add** and **edit**: every child is declared, children form no cycle, and every problem is listed at once. Dropping a child or a reason the group doesn't have is an error. A command that changes nothing saves nothing. **export** still applies each module's own rules, such as which Ansible file a group is routed to.
+
 ## modules
 
 List the installed modules, whether each can import and export, and which inventories switch it on. Modules that failed to load are listed with the reason. Without config.toml it still lists the modules, with no inventories.
@@ -148,7 +168,7 @@ Write the output of every enabled module of every inventory, or only the named m
 | **-h**, **--help** | Show help for **ari** or for one command |
 | **--version** | Show the version |
 
-**add** and **import** write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. **ls**, **show** and **export** cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
+**add**, **import** and **group** *NAME* write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml. **ls**, **show**, **export** and **group** without a name cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
 
 # CONFIGURATION
 
@@ -178,7 +198,7 @@ zones = "zone_*"
 
 | Key | Meaning |
 |-------------|------------|
-| **default** | Inventory used by **add** and **import** when **-i** and **ARI_INVENTORY** are unset |
+| **default** | Inventory used by **add**, **import** and **group** *NAME* when **-i** and **ARI_INVENTORY** are unset |
 | `inventories.NAME.file` | Inventory data; defaults to `NAME.json` beside config.toml |
 | `inventories.NAME.MODULE` | A module this inventory uses, with that module's settings |
 | `inventories.NAME.MODULE.enabled` | **false** parks the module without losing its settings |
@@ -243,7 +263,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 | **modules** | Each module's own data, under its name |
 | `modules.ssh.options` | Any other ssh_config keywords, written in order |
 
-Every group a host uses is declared under **groups**, even as an empty `{}`, so a typo fails instead of creating a group. No command declares groups yet; edit the file. A declaration takes three optional keys: **description**, whose first line is a zone's section header in the hosts file and whose further lines become comments under it; **children**, the group's child groups; and **reasons**, an ordered map of reason key to text.
+Every group a host uses is declared under **groups**, even as an empty `{}`, so a typo fails instead of creating a group. **ari group** declares and changes them. A declaration takes three optional keys: **description**, whose first line is a zone's section header in the hosts file and whose further lines become comments under it; **children**, the group's child groups; and **reasons**, an ordered map of reason key to text.
 
 Data for a module that isn't installed is kept as it is, so removing a plugin never loses anything. A version 1 file, from ari 0.2, is upgraded when it's read and saved as version 2 on its next write.
 
@@ -285,7 +305,7 @@ The files get mode 0644, so anyone who runs playbooks from the repository can re
 
 | Variable | Effect |
 |-------|-------------|
-| **ARI_INVENTORY** | Inventory for **add** and **import** when **-i** is not given |
+| **ARI_INVENTORY** | Inventory for **add**, **import** and **group** *NAME* when **-i** is not given |
 | **XDG_CONFIG_HOME** | Where config.toml and inventories live |
 | **XDG_STATE_HOME** | Where the guard state lives |
 
@@ -307,6 +327,13 @@ Bring an Ansible inventory in, then the ssh-only hosts beside it:
 ```
 ari import ansible ~/work/infra/ansible/inventory -i work
 ari import ssh ~/.ssh/config.d/20-work.conf -i work --exclude ansible
+```
+
+Declare a zone with its header, and a group with a reason hosts can give:
+
+```
+ari -i work group zone_app --description 'app subnet (192.0.2.0/25)'
+ari -i work group no_auto_update --reason 'secrets=secrets and prod path'
 ```
 
 Add a host to a zone and a monitoring group, then give it a reason to stay out of updates:
