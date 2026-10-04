@@ -1,12 +1,16 @@
 from conftest import FIXTURES
 from ari.models import Defaults, Inventory
 from ari.modules import registry
-from ari.modules.ssh import SshModule, parse, render, to_host
+from ari.modules.ssh import SshModule, parse, render, to_hosts
 
 
 def hosts_from(text, source="test"):
+    """Hosts as a new import stores them, with what the blocks left unset filled in."""
     blocks, warnings = parse(text, source)
-    return [h for b in blocks if (h := to_host(b, source, warnings))], warnings
+    hosts = [h for b in blocks for h in to_hosts(b, source, warnings)]
+    for host in hosts:
+        SshModule().complete(host)
+    return hosts, warnings
 
 
 def options(host):
@@ -52,6 +56,25 @@ Host real
 def test_missing_user_stays_missing_and_port_is_pinned():
     hosts, _ = hosts_from("Host a\n  HostName 192.0.2.5\n")
     assert hosts[0].user is None and hosts[0].port == 22
+
+
+def test_what_a_block_leaves_out_stays_unset_until_complete():
+    blocks, warnings = parse("Host a\n  User x\n", "test")
+    [host] = to_hosts(blocks[0], "test", warnings)
+    assert (host.hostname, host.port) == ("", None)
+    SshModule().complete(host)
+    assert (host.hostname, host.port) == ("a", 22)
+
+
+def test_several_tokens_without_hostname_are_a_host_each():
+    hosts, _ = hosts_from("Host web web.example.com\n  User deploy\n  Port 2200\n  ProxyJump j\n")
+    assert [(h.name, h.hostname, h.aliases) for h in hosts] == [("web", "web", []), ("web.example.com", "web.example.com", [])]
+    assert all((h.user, h.port, options(h)) == ("deploy", 2200, {"ProxyJump": "j"}) for h in hosts)
+
+
+def test_with_hostname_the_other_tokens_are_aliases():
+    hosts, _ = hosts_from("Host web web.example.com\n  HostName 192.0.2.10\n")
+    assert [(h.name, h.hostname, h.aliases) for h in hosts] == [("web", "192.0.2.10", ["web.example.com"])]
 
 
 def test_equals_form_and_first_value_wins():

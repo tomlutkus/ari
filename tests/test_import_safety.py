@@ -203,6 +203,85 @@ def test_reimporting_the_generated_file_is_unchanged(personal, tmp_path, capsys)
     assert "1 unchanged (p)" in capsys.readouterr().out
 
 
+# What a block leaves out is not set: a later block or a re-import fills it, never conflicts with it
+
+
+def host(home, name, inv="personal"):
+    return next(h for h in json.loads(inventory(home, inv).read_text())["hosts"] if h["name"] == name)
+
+
+def test_a_later_block_fills_what_the_first_left_unset(personal, tmp_path, capsys):
+    text = "Host db\n  HostName 192.0.2.10\n\nHost db\n  User admin\n  IdentityFile ~/.ssh/k\n  ProxyJump j\n"
+    assert run("import", "ssh", source(tmp_path, text)) == 0
+    assert "conflict" not in capsys.readouterr().err
+    db = host(personal, "db")
+    assert (db["hostname"], db["user"], db["ssh_key"]) == ("192.0.2.10", "admin", "~/.ssh/k")
+    assert db["modules"]["ssh"]["options"]["ProxyJump"] == "j"
+
+
+def test_a_block_on_reimport_adds_without_hostname_or_port(personal, tmp_path, capsys):
+    run("import", "ssh", source(tmp_path, "Host db\n  HostName 192.0.2.10\n  Port 2200\n"))
+    capsys.readouterr()
+    assert run("import", "ssh", source(tmp_path, "Host db\n  User admin\n", "b.conf")) == 0
+    assert "1 merged (db)" in capsys.readouterr().out
+    assert (host(personal, "db")["port"], host(personal, "db")["user"]) == (2200, "admin")
+
+
+def test_a_hostname_set_differently_still_conflicts(personal, tmp_path, capsys):
+    text = "Host db\n  HostName 192.0.2.10\n\nHost db\n  HostName 192.0.2.11\n  User admin\n"
+    assert run("import", "ssh", source(tmp_path, text)) == 1
+    assert "db: HostName 192.0.2.11 differs from 192.0.2.10; not merged" in capsys.readouterr().err
+    assert "user" not in host(personal, "db")
+
+
+def test_a_new_host_without_port_is_22_whatever_the_default(personal, tmp_path):
+    inventory(personal).write_text(json.dumps({"version": 2, "defaults": {"port": 2222}}))
+    run("import", "ssh", source(tmp_path, "Host a\n  HostName 192.0.2.1\n\nHost b\n  HostName 192.0.2.2\n  Port 2222\n"))
+    assert host(personal, "a")["port"] == 22
+    assert "port" not in host(personal, "b")
+
+
+BLOCKS = """\
+Host web web.example.com
+    User deploy
+
+Host db
+    HostName 192.0.2.10
+
+Host db db-old
+    User admin
+    IdentityFile ~/.ssh/db-ed25519
+    ProxyJump web
+
+Host nas storage 192.0.2.254
+    HostName 192.0.2.254
+    Port 2222
+
+Host box box.example.org 198.51.100.7
+    User ops
+    Port 2200
+    IdentityFile ~/.ssh/box
+"""
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the ssh client")
+def test_blocks_ssh_reads_together_resolve_identically(personal, tmp_path):
+    """Every token answers ssh -G the same from the source and from the export. One host is
+    there already, so the import doesn't infer defaults from these blocks."""
+    inventory(personal).write_text(json.dumps({"version": 2, "hosts": [{"name": "seed", "hostname": "192.0.2.99"}]}))
+    path = source(tmp_path, BLOCKS)
+    assert run("import", "ssh", path) == 0
+    assert run("export") == 0
+    exported = personal / "ssh" / "10-personal.conf"
+    tokens = [t for line in BLOCKS.splitlines() if line.startswith("Host ") for t in line.split()[1:]]
+
+    def resolve(config, token):
+        return subprocess.run(["ssh", "-G", "-F", str(config), token], capture_output=True, text=True, check=True).stdout
+
+    for token in tokens:
+        assert resolve(path, token) == resolve(exported, token), token
+
+
 # Ansible: what Ansible would lose leaves the files unadopted; comments don't
 
 

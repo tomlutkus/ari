@@ -523,6 +523,23 @@ With the \f[B]ssh\f[R] module,
 \f[I]SOURCE\f[R] is a config file.
 The first token on a Host line becomes
 the name and the rest become aliases.
+A block without \f[B]HostName\f[R] is
+read the way ssh reads it, which
+connects to whichever token was typed:
+each token becomes a host of its own,
+connecting to its own name, with the
+block\[aq]s user, port, key and options.
+A block for a host the inventory already
+has, a later block in the same file or
+the same host on re-import, compares and
+fills only what it sets, so without
+\f[B]HostName\f[R] or \f[B]Port\f[R] it
+can still add a user, key, alias or
+option.
+A new host without \f[B]Port\f[R] gets
+22, ssh\[aq]s own default, stored only
+when the inventory\[aq]s default port
+differs.
 \f[B]HostName\f[R], \f[B]User\f[R],
 \f[B]Port\f[R] and
 \f[B]IdentityFile\f[R] become fields,

@@ -446,8 +446,9 @@ def _strip_defaults(inventory: Inventory, host: Host) -> None:
 
 def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | None:
     """What the source sets differently from the record. Merge only fills gaps, so anything
-    returned here would otherwise be dropped while the report said nothing."""
-    if incoming.hostname != existing.hostname:
+    returned here would otherwise be dropped while the report said nothing. A field the source
+    leaves unset, an empty hostname or no port, says nothing either way."""
+    if incoming.hostname and incoming.hostname != existing.hostname:
         return f"HostName {incoming.hostname} differs from {existing.hostname}"
     user = inventory.user(existing)
     if incoming.user and user and incoming.user != user:
@@ -512,7 +513,9 @@ def import_hosts(
     # A host that would make the inventory unreadable never gets near it, nor near the defaults.
     readable = []
     for host in result.hosts:
-        problems = _shape_problems(target, host)
+        probe = copy.deepcopy(host)
+        module.complete(probe)
+        problems = _shape_problems(target, probe)
         if problems:
             report.refused += [p.message for p in problems]
         else:
@@ -573,6 +576,7 @@ def import_hosts(
         if existing is None:
             inherits_user = result.defaults is None and host.user is None and target.defaults.user
             inherits_key = result.defaults is None and host.ssh_key is None and target.defaults.ssh_key
+            module.complete(host)
             _strip_defaults(target, host)
             host.exclude = list(exclude)
             # Checked against everything already in the inventory, hosts added earlier in this

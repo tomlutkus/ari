@@ -1,5 +1,6 @@
 """ssh: OpenSSH client config. Imports Host blocks; exports one file per inventory."""
 
+import copy
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -123,17 +124,22 @@ def parse(text: str, source: str) -> tuple[list[Block], list[str]]:
 ACCUMULATING = {"identityfile", "certificatefile", "localforward", "remoteforward", "dynamicforward", "sendenv"}
 
 
-def to_host(block: Block, source: str, warnings: list[str], dropped: list[str] | None = None) -> Host | None:
-    """One block as a host, or None when it can't be read. Whatever ssh would have used but the
-    record can't hold goes into dropped as well as warnings.
+def to_hosts(block: Block, source: str, warnings: list[str], dropped: list[str] | None = None) -> list[Host]:
+    """The hosts one block names, or none when it can't be read. Whatever ssh would have used but
+    the record can't hold goes into dropped as well as warnings.
 
-    A block without User stays without one: ssh would use whoever connects, and pinning the
-    importing login would be wrong on any other machine. A missing Port means 22, ssh's own
-    default; like every field, it's stored only when it differs from the inventory default, and
-    otherwise follows that default."""
+    What the block doesn't set stays unset, hostname empty and port None, so a block for a host
+    the inventory already has, a later one or a re-import, compares and fills only what it states.
+    complete() fills the rest for a host that's new. A block without User stays without one: ssh
+    would use whoever connects, and pinning the importing login would be wrong on any other
+    machine.
+
+    Without HostName, ssh connects to whichever token was typed, so a Host line with several
+    tokens names one host per token, each with the block's settings. With HostName, the tokens
+    after the first are aliases of it."""
     dropped = [] if dropped is None else dropped
     name, *aliases = block.tokens
-    host = Host(name=name, hostname=name, aliases=aliases)
+    host = Host(name=name, hostname="", aliases=aliases)
     where = f"{source}:{block.line} ({name})"
     seen: set[str] = set()
     identities_only: tuple[str, str] | None = None
@@ -162,7 +168,7 @@ def to_host(block: Block, source: str, warnings: list[str], dropped: list[str] |
                     message = f"{where}: Port {value!r} is not a port number; host skipped"
                     warnings.append(message)
                     dropped.append(message)
-                    return None
+                    return []
             case "identityfile":
                 host.ssh_key = _single(value)
             case "identitiesonly":
@@ -176,10 +182,16 @@ def to_host(block: Block, source: str, warnings: list[str], dropped: list[str] |
     elif host.ssh_key and not identities_only:
         extra["IdentitiesOnly"] = "no"
 
-    host.port = host.port or 22
     if extra:
         host.modules["ssh"] = {"options": extra}
-    return host
+    if host.hostname or not aliases:
+        return [host]
+    hosts = []
+    for token in block.tokens:
+        one = copy.deepcopy(host)
+        one.name, one.aliases = token, []
+        hosts.append(one)
+    return hosts
 
 
 def render(inventory: Inventory, hosts: list[Host]) -> str:
@@ -269,6 +281,14 @@ class SshModule(Module):
             del existing["options"]
         return changed
 
+    def complete(self, host: Host) -> None:
+        """Without HostName ssh connects to the name itself, and without Port to 22, ssh's own
+        default. Like any field, the port is then stored only when it differs from the inventory
+        default."""
+        host.hostname = host.hostname or host.name
+        if host.port is None:
+            host.port = 22
+
     def describe(self, inventory: Inventory, host: Host) -> list[str]:
         return [f"{k} {v}" for k, v in options(inventory, host).items()]
 
@@ -289,5 +309,5 @@ class SshModule(Module):
         blocks, warnings = parse(text, tilde(path))
         skipped = bool(warnings)  # everything parse warns about is left out
         dropped: list[str] = []
-        hosts = [h for b in blocks if (h := to_host(b, tilde(path), warnings, dropped))]
+        hosts = [h for b in blocks for h in to_hosts(b, tilde(path), warnings, dropped)]
         return ImportResult(hosts, warnings, [(path, data)], lossy=skipped or bool(dropped))

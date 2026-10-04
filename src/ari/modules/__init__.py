@@ -71,6 +71,11 @@ class Module:
     def strip_defaults(self, defaults: dict[str, Any], data: dict[str, Any]) -> None:
         """Remove from a newly imported host whatever its inventory defaults already say."""
 
+    def complete(self, host: Host) -> None:
+        """A host new to the inventory: fill what the source left unset the way this format reads
+        a missing value. Until then unset means not stated, so a re-import, or a later entry for a
+        host already read, compares and fills only what the source says."""
+
     def merge(self, existing: dict[str, Any], incoming: dict[str, Any]) -> bool:
         """Fold re-imported data into a host without overwriting anything; report whether it changed."""
         changed = False
