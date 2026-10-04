@@ -5,10 +5,12 @@ import stat
 import subprocess
 
 import pytest
+from rich.cells import cell_len
+from rich.console import Console
 
 from conftest import FIXTURES, PERSONAL_ONLY, copy_fixture, write_config
-from ari import core
-from ari.cli import main
+from ari import cli, core
+from ari.cli import _groups_cell, main
 from ari.config import STARTER, load_config
 from ari.modules import registry
 from ari.modules.ssh import SshModule
@@ -216,6 +218,31 @@ def test_search_finds_the_port_ls_shows(home, capsys):
     assert run("ls", "--search", "2222") == 0
     rows = {cells[0]: cells for line in capsys.readouterr().out.splitlines() if (cells := line.split())}
     assert rows["inherits"][3] == "2222" and "own" not in rows
+
+
+def test_groups_cell_fits_what_it_can_and_counts_the_rest():
+    groups = ["zone_app", "monitoring_db", "no_auto_update"]
+    assert _groups_cell([], 20).plain == "-"
+    assert _groups_cell(groups, 100).plain == "zone_app, monitoring_db, no_auto_update"
+    assert _groups_cell(groups, 30).plain == "zone_app, monitoring_db +1"
+    assert _groups_cell(groups, 12).plain == "zone_app +2"
+    assert _groups_cell(groups, 8).plain == "zone… +2"
+
+
+@pytest.mark.parametrize("width, shown", [(80, None), (300, 6)])
+def test_ls_rows_never_wrap_on_account_of_groups(home, monkeypatch, capsys, width, shown):
+    groups = {f"group_{i}_with_a_long_name": {} for i in range(6)}
+    hosts = [{"name": f"host-{i}", "hostname": f"192.0.2.{i}", "groups": list(groups)} for i in range(3)]
+    write_config(home, PERSONAL_ONLY)
+    (home / "config" / "ari" / "personal.json").write_text(json.dumps({"version": 2, "groups": groups, "hosts": hosts}))
+    monkeypatch.setattr(cli, "out", Console(width=width, highlight=False))
+    assert run("ls") == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert all(cell_len(line) <= width for line in lines)
+    rows = [line for line in lines if "192.0.2." in line]
+    assert len(rows) == 3
+    for row in rows:
+        assert ("+5" in row) if shown is None else (row.count("_with_a_long_name") == shown)
 
 
 def test_a_parked_module_does_not_block_export(both, capsys):

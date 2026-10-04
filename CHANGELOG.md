@@ -6,6 +6,7 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 
 - `ari init` writes a commented starter `config.toml` and prints where it went. It refuses when one exists, whatever it holds, and is the only time ari writes that file. `--help`, `--version` and `ari modules` run without a config.
 - `edit --unalias ALIAS`, repeatable, drops an alias. It runs before `--alias`, so `--unalias old --alias new` swaps one for the other. Naming an alias the host doesn't have is an error.
+- `ls` keeps each host on one line. GROUPS shows as many groups as fit beside the other columns, then `+N` for the rest, instead of wrapping; `show` lists them all.
 
 ## 0.4.1 (2026-10-04)
 

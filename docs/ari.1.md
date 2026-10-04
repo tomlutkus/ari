@@ -68,6 +68,8 @@ Write a starter **config.toml** and print where it went. The starter declares on
 
 List hosts across every inventory, or only the one named with **-i**. User and port show effective values, with inventory defaults filled in.
 
+GROUPS shows as many of a host's groups as fit beside the other columns, in the order the host lists them, then +*N* for the rest, so a row never wraps on their account; **show** lists them all. Output to a pipe is laid out for 80 columns unless **COLUMNS** says otherwise.
+
 | Option | Meaning |
 |-------|-------------|
 | **--search** *TEXT* | Only hosts with *TEXT* in any field, case-insensitive. User, port and key match their effective values, defaults included |

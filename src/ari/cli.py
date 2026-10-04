@@ -7,7 +7,9 @@ import re
 import sys
 
 from rich import box
+from rich.cells import cell_len
 from rich.console import Console
+from rich.measure import Measurement
 from rich.table import Table
 from rich.text import Text
 
@@ -40,24 +42,47 @@ def _user(inventory, host) -> Text:
     return Text(user) if user else Text(getpass.getuser(), style="dim")
 
 
-def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
-    rows = core.list_hosts(cfg, _inventory_arg(args), args.search, args.group)
-    if not rows:
-        out.print("no hosts")
-        return 0
+def _groups_cell(groups: list[str], width: int) -> Text:
+    """As many groups as fit in width, in the order the host stores them, then +N for the rest."""
+    if not groups:
+        return Text("-")
+    for shown in range(len(groups), 0, -1):
+        hidden = len(groups) - shown
+        text = ", ".join(groups[:shown]) + (f" +{hidden}" if hidden else "")
+        if cell_len(text) <= width:
+            return Text(text)
+    # Not even the first group fits: cut it short and keep the count.
+    rest = f" +{len(groups) - 1}" if len(groups) > 1 else ""
+    first = Text(groups[0])
+    first.truncate(max(width - len(rest), 1), overflow="ellipsis")
+    return first + rest
+
+
+def _ls_table(rows: list, groups: list[Text]) -> Table:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
     for column in ("NAME", "HOSTNAME", "USER", "PORT", "GROUPS", "INV"):
-        table.add_column(column, justify="right" if column == "PORT" else "left")
-    for inventory, host in rows:
+        table.add_column(column, justify="right" if column == "PORT" else "left", no_wrap=column == "GROUPS")
+    for (inventory, host), cell in zip(rows, groups):
         table.add_row(
             Text(host.name),
             Text(host.hostname),
             _user(inventory, host),
             Text(str(inventory.port(host))),
-            Text(", ".join(host.groups) or "-"),
+            cell,
             Text(inventory.name, style="dim"),
         )
-    out.print(table)
+    return table
+
+
+def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
+    rows = core.list_hosts(cfg, _inventory_arg(args), args.search, args.group)
+    if not rows:
+        out.print("no hosts")
+        return 0
+    # GROUPS gets whatever width the other columns leave, so a row never wraps on its account.
+    bare = Measurement.get(out, out.options, _ls_table(rows, [Text("")] * len(rows))).maximum
+    width = out.width - (bare - len("GROUPS"))
+    out.print(_ls_table(rows, [_groups_cell(host.groups, width) for _, host in rows]))
     out.print(Text(_plural(len(rows), "host"), style="dim"))
     return 0
 
