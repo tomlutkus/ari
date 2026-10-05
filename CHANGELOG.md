@@ -2,6 +2,10 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
+## Unreleased
+
+- `ari key` has a STATE column saying what ssh would find at each key's path: `ok`, or every problem, comma separated. A key file that's missing, unreadable, open to group or others, not a private key, or that disagrees with its `.pub` or the declared `pub`, and the validity of a `-cert.pub` beside it, read with `ssh-keygen -L`. Paths resolve as ssh resolves them; a relative path, one with `%` tokens or `${}`, or an unknown `~user` shows only that. Nothing else reads key files, so `export` still works on a machine that doesn't hold every key.
+
 ## 0.7.1 (2026-10-05)
 
 - The inventory format is version 3. Keys are declared once per inventory under `keys`, by name with their file's `path`, and hosts and defaults list the names in the order ssh offers them. Export writes an IdentityFile for each, then IdentitiesOnly yes once; Ansible gets the first key's file. A version 2 file is upgraded when it's read, each path declared under its file's stem and numbered on a clash, and saved as version 3 on its next write; every generated file stays the same.

@@ -159,7 +159,7 @@ def _line(value: str | None, what: str, where: str) -> str | None:
 @dataclass
 class KeyDef:
     """A declared key: the private key file ssh offers, under a name hosts and defaults list.
-    pub, the public half, is kept as written; nothing fills or checks it yet."""
+    pub, the public half, is kept as written; ari key checks it against the file, nothing fills it yet."""
 
     path: str
     pub: str | None = None

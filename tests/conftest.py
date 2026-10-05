@@ -4,16 +4,22 @@ from pathlib import Path
 
 import pytest
 
+from ari import keyfiles
+
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    """An isolated config, state and ssh directory per test."""
+    """An isolated config, state and ssh directory per test. ari key reads key files under the
+    passwd home, as ssh does, so ~ there is tmp_path/home too."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.delenv("ARI_INVENTORY", raising=False)
     (tmp_path / "ssh").mkdir()
+    (tmp_path / "home").mkdir()
+    real = keyfiles._home
+    monkeypatch.setattr(keyfiles, "_home", lambda user: str(tmp_path / "home") if user is None else real(user))
     return tmp_path
 
 

@@ -1,0 +1,21 @@
+
+ KEY         HOSTS   PATH                  STATE                      INV
+ ─────────────────────────────────────────────────────────────────────────────
+ fine        1       ~/.ssh/fine           ok                         personal
+ gone        0       ~/.ssh/gone           missing                    personal
+ open        1       ~/.ssh/open           mode 0644                  personal
+ swapped     0       ~/.ssh/swapped        .pub mismatch              personal
+ stale       0       ~/.ssh/stale          pub stale                  personal
+ legacy      0       ~/.ssh/legacy         pair unchecked             personal
+ inverted    0       ~/.ssh/inverted.pub   not a key                  personal
+ folder      0       ~/.ssh/folder         not a file                 personal
+ rel         0       keys/rel              relative                   personal
+ tokens      0       ~/.ssh/%h             tokens                     personal
+ elsewhere   0       ~ari-no-such-user/k   no user ari-no-such-user   personal
+ forever     0       ~/.ssh/forever        cert forever               personal
+ current     0       ~/.ssh/current        cert to 2099-12-31         personal
+ expired     0       ~/.ssh/expired        cert expired 2020-02-01    personal
+ early       0       ~/.ssh/early          cert from 2099-01-01       personal
+ borrowed    0       ~/.ssh/borrowed       cert for another key       personal
+
+16 keys

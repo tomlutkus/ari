@@ -147,6 +147,21 @@ The other checks match **add** and **edit**: every child is declared, children f
 
 Without *NAME*, list the declared keys of every inventory, or only the one named with **-i**, in the order they're declared. HOSTS counts the hosts ssh offers the key to, including those that take it from the defaults, with the hosts that list it themselves beside it when the two differ. Every column is whole: when the table doesn't fit, its rows run past the edge, so a name or a path never reads cut short.
 
+STATE says what ssh, run by you on this machine, would find at the key's path: **ok** when nothing is wrong, otherwise every problem, comma separated. The path is resolved as ssh resolves IdentityFile: `~` and `~user` through the password database, and a relative path from wherever ssh runs. A path **ari** can't turn into one file shows only why: **relative**, **tokens** for one with `%` or `${`, which can name a different file per host, and **no user** *NAME* for a `~user` the system doesn't know. A file ssh can't read shows only **missing**, **unreadable** or **not a file**. Otherwise:
+
+| State | Meaning |
+|-------|-------------|
+| **mode** *MODE* | The file is yours and group or others have access, so ssh ignores the key |
+| **not a key** | The file holds no private key, a public key for instance |
+| **pair unchecked** | A PEM or PKCS#8 private key, whose public half can't be read without its passphrase; `ssh-keygen -p -f` *PATH* rewrites it in OpenSSH format |
+| **.pub mismatch** | *PATH*`.pub` holds another key. ssh offers that one and then won't sign with this file, so the key fails |
+| **pub stale** | The declared **pub** isn't this file's public half |
+| **cert to** *DATE* | *PATH*`-cert.pub` is valid until *DATE*; also **cert forever**, **cert from** *DATE* while not yet valid, and **cert expired** *DATE* |
+| **cert for another key** | *PATH*`-cert.pub` certifies a different key |
+| **cert unreadable** | `ssh-keygen -L` can't read *PATH*`-cert.pub`; **cert unchecked** when there's no ssh-keygen |
+
+The private key is the reference: an OpenSSH key keeps its public half unencrypted, so **ari** reads it with no passphrase. Public keys compare on their key, not their comment, and a *PATH*`.pub` that holds no key says nothing, since ssh skips it. Certificate dates are local time, as `ssh-keygen -L` prints them. These checks run only here: **export** and every other command leave key files alone, so they work on a machine that doesn't hold every key.
+
 With *NAME*, declare that key in one inventory, **-i**, then **ARI_INVENTORY**, then **default** from config.toml, or change it if it's declared already. A name has no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`.
 
 | Option | Meaning |
@@ -322,7 +337,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 
 Every group a host uses is declared under **groups**, even as an empty `{}`, so a typo fails instead of creating a group. **ari group** declares and changes them. A declaration takes three optional keys: **description**, whose first line is a zone's section header in the hosts file and whose further lines become comments under it; **children**, the group's child groups; and **reasons**, an ordered map of reason key to text.
 
-Every key a host or the defaults list is declared under **keys**, by a name with no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`. **ari key** declares, moves and removes them. A declaration holds the private key's **path**, and **pub**, the public key, which **ari** keeps as written but doesn't fill or check yet. A host that lists keys uses those instead of the defaults' list, not on top of them.
+Every key a host or the defaults list is declared under **keys**, by a name with no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`. **ari key** declares, moves and removes them. A declaration holds the private key's **path**, and **pub**, the public key, which **ari** keeps as written and **ari key** checks against the key file but doesn't fill yet. A host that lists keys uses those instead of the defaults' list, not on top of them.
 
 Options take a string. **CertificateFile**, **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv** can also take a list, since ssh uses every line of those; any other keyword uses only its first line, so a list there doesn't load. A list of one is stored as its string. A host's value for a keyword replaces the default's, lists included.
 

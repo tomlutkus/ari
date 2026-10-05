@@ -13,7 +13,7 @@ from rich.measure import Measurement
 from rich.table import Table
 from rich.text import Text
 
-from . import __version__, core
+from . import __version__, core, keyfiles
 from .config import Config, load_config
 from .errors import HostsError
 from .paths import tilde
@@ -222,13 +222,14 @@ def cmd_group(cfg: Config, args: argparse.Namespace) -> int:
 
 def _key_table(rows: list[core.KeyRow]) -> Table:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
-    for column in ("KEY", "HOSTS", "PATH", "INV"):
+    for column in ("KEY", "HOSTS", "PATH", "STATE", "INV"):
         table.add_column(column, no_wrap=True)
     for row in rows:
         hosts = Text(str(row.total))
         if row.direct != row.total:
             hosts.append(f" ({row.direct} direct)", style="dim")
-        table.add_row(Text(row.name), hosts, Text(row.key.path), Text(row.inventory.name, style="dim"))
+        state = Text(", ".join(row.state), style="dim" if row.state == [keyfiles.OK] else "")
+        table.add_row(Text(row.name), hosts, Text(row.key.path), state, Text(row.inventory.name, style="dim"))
     return table
 
 

@@ -526,6 +526,115 @@ doesn\[aq]t fit, its rows run past the
 edge, so a name or a path never reads
 cut short.
 .PP
+STATE says what ssh, run by you on this
+machine, would find at the key\[aq]s
+path: \f[B]ok\f[R] when nothing is
+wrong, otherwise every problem, comma
+separated.
+The path is resolved as ssh resolves
+IdentityFile: \f[V]\[ti]\f[R] and
+\f[V]\[ti]user\f[R] through the password
+database, and a relative path from
+wherever ssh runs.
+A path \f[B]ari\f[R] can\[aq]t turn into
+one file shows only why:
+\f[B]relative\f[R], \f[B]tokens\f[R] for
+one with \f[V]%\f[R] or \f[V]${\f[R],
+which can name a different file per
+host, and \f[B]no user\f[R]
+\f[I]NAME\f[R] for a \f[V]\[ti]user\f[R]
+the system doesn\[aq]t know.
+A file ssh can\[aq]t read shows only
+\f[B]missing\f[R], \f[B]unreadable\f[R]
+or \f[B]not a file\f[R].
+Otherwise:
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+State
+T}@T{
+Meaning
+T}
+_
+T{
+\f[B]mode\f[R] \f[I]MODE\f[R]
+T}@T{
+The file is yours and group or others
+have access, so ssh ignores the key
+T}
+T{
+\f[B]not a key\f[R]
+T}@T{
+The file holds no private key, a public
+key for instance
+T}
+T{
+\f[B]pair unchecked\f[R]
+T}@T{
+A PEM or PKCS#8 private key, whose
+public half can\[aq]t be read without
+its passphrase;
+\f[V]ssh-keygen -p -f\f[R]
+\f[I]PATH\f[R] rewrites it in OpenSSH
+format
+T}
+T{
+\f[B].pub mismatch\f[R]
+T}@T{
+\f[I]PATH\f[R]\f[V].pub\f[R] holds
+another key.
+ssh offers that one and then won\[aq]t
+sign with this file, so the key fails
+T}
+T{
+\f[B]pub stale\f[R]
+T}@T{
+The declared \f[B]pub\f[R] isn\[aq]t
+this file\[aq]s public half
+T}
+T{
+\f[B]cert to\f[R] \f[I]DATE\f[R]
+T}@T{
+\f[I]PATH\f[R]\f[V]-cert.pub\f[R] is
+valid until \f[I]DATE\f[R]; also
+\f[B]cert forever\f[R], \f[B]cert
+from\f[R] \f[I]DATE\f[R] while not yet
+valid, and \f[B]cert expired\f[R]
+\f[I]DATE\f[R]
+T}
+T{
+\f[B]cert for another key\f[R]
+T}@T{
+\f[I]PATH\f[R]\f[V]-cert.pub\f[R]
+certifies a different key
+T}
+T{
+\f[B]cert unreadable\f[R]
+T}@T{
+\f[V]ssh-keygen -L\f[R] can\[aq]t read
+\f[I]PATH\f[R]\f[V]-cert.pub\f[R];
+\f[B]cert unchecked\f[R] when
+there\[aq]s no ssh-keygen
+T}
+.TE
+.PP
+The private key is the reference: an
+OpenSSH key keeps its public half
+unencrypted, so \f[B]ari\f[R] reads it
+with no passphrase.
+Public keys compare on their key, not
+their comment, and a
+\f[I]PATH\f[R]\f[V].pub\f[R] that holds
+no key says nothing, since ssh skips it.
+Certificate dates are local time, as
+\f[V]ssh-keygen -L\f[R] prints them.
+These checks run only here:
+\f[B]export\f[R] and every other command
+leave key files alone, so they work on a
+machine that doesn\[aq]t hold every key.
+.PP
 With \f[I]NAME\f[R], declare that key in
 one inventory, \f[B]-i\f[R], then
 \f[B]ARI_INVENTORY\f[R], then
@@ -1315,8 +1424,9 @@ removes them.
 A declaration holds the private
 key\[aq]s \f[B]path\f[R], and
 \f[B]pub\f[R], the public key, which
-\f[B]ari\f[R] keeps as written but
-doesn\[aq]t fill or check yet.
+\f[B]ari\f[R] keeps as written and
+\f[B]ari key\f[R] checks against the key
+file but doesn\[aq]t fill yet.
 A host that lists keys uses those
 instead of the defaults\[aq] list, not
 on top of them.

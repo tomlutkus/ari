@@ -383,11 +383,11 @@ def test_key_lists_every_inventory_with_hosts_counted_through_the_defaults(mixed
     assert run("key") == 0
     lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
     rows = [line.split() for line in lines[2:-1]]
-    assert lines[0].split() == ["KEY", "HOSTS", "PATH", "INV"]
+    assert lines[0].split() == ["KEY", "HOSTS", "PATH", "STATE", "INV"]
     assert rows == [
-        ["laptop", "0", "~/.ssh/laptop", "personal"],
-        ["lab-ed25519", "3", "(1", "direct)", "~/.ssh/lab-ed25519", "work"],
-        ["web", "1", "~/.ssh/web", "work"],
+        ["laptop", "0", "~/.ssh/laptop", "missing", "personal"],
+        ["lab-ed25519", "3", "(1", "direct)", "~/.ssh/lab-ed25519", "missing", "work"],
+        ["web", "1", "~/.ssh/web", "missing", "work"],
     ]
     assert lines[-1] == "3 keys"
     assert run("key", "-i", "personal") == 0

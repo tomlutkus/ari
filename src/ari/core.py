@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from . import storage
+from . import keyfiles, storage
 from .config import STARTER, Config
 from .errors import HostsError
 from .guard import Guard, Status
@@ -444,17 +444,19 @@ class KeyRow:
     key: KeyDef
     direct: int  # hosts that list the key
     total: int  # those plus the hosts that take it from the defaults
+    state: list[str]  # what ssh would find at its path, keyfiles.state
 
 
 def list_keys(cfg: Config, scope: str | None = None) -> list[KeyRow]:
-    """Declared keys in declaration order, every inventory unless scope names one."""
+    """Declared keys in declaration order, every inventory unless scope names one, each with the
+    state of its files on this machine."""
     rows = []
     for ic in cfg.scope(scope):
         inventory = storage.load(ic)
         for name, key in inventory.keys.items():
             direct = sum(name in h.keys for h in inventory.hosts)
             total = sum(name in inventory.host_keys(h) for h in inventory.hosts)
-            rows.append(KeyRow(inventory, name, key, direct, total))
+            rows.append(KeyRow(inventory, name, key, direct, total, keyfiles.state(key.path, key.pub)))
     return rows
 
 
