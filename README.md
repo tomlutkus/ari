@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="docs/ari_logo.png" alt="ari logo" width="200">
-
-# 🐝 ari
+<img src="docs/ari_logo.png" alt="ari" width="200">
 
 **One record per SSH host. ssh config and Ansible inventory, built from it.**
 
