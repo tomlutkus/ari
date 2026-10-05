@@ -2,7 +2,7 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
-## Unreleased
+## 0.6.1 (2026-10-05)
 
 - ssh import reads a Host line with several names and no HostName as one host per name, each connecting to its own name, as ssh does. Before, the other names became aliases of the first and connected to it.
 - ssh import treats a HostName or Port that a block leaves out as not set when the host is already in the inventory, from a later block in the same file or on re-import. Such a block now adds its user, key, aliases or options instead of reporting a HostName conflict. A value set differently is still a conflict.

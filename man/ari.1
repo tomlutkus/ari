@@ -15,7 +15,7 @@
 . ftr VB CB
 . ftr VBI CBI
 .\}
-.TH "ARI" "1" "October 2026" "ari 0.6.0" "User Commands"
+.TH "ARI" "1" "October 2026" "ari 0.6.1" "User Commands"
 .hy
 .SH NAME
 .PP
@@ -622,10 +622,11 @@ warning.
 The groups the source brings get the
 check \f[B]group\f[R] runs: if they
 would add a cycle or an undeclared
-child, the problem is refused, the
+child, the problem is refused and the
 inventory\[aq]s groups stay as they
-were, and so is every host in a group
-that didn\[aq]t get declared.
+were, and a host in a group that
+didn\[aq]t get declared is refused with
+it.
 .SS export [\f[I]MODULE\f[R] ...]
 .PP
 Write the output of every enabled module

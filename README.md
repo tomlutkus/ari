@@ -80,7 +80,7 @@ all:
       ansible_port: 2222
 ```
 
-Run `ari` on its own and the same list opens as a TUI. Type `/` to filter, Enter for a host's details, `s` to ssh straight in and come back when the session ends, and `a`, `e`, `g`, `d` and `x` to add, edit, regroup, delete and export without leaving it. Every change goes through the same checks as the commands.
+Run `ari` on its own and the same list opens as a TUI. Type `/` to filter, Enter for a host's details, `s` to ssh straight into any host the generated ssh config holds and come back when the session ends, and `a`, `e`, `g`, `d` and `x` to add, edit, regroup, delete and export without leaving it. Every change goes through the same checks as the commands.
 
 ## How it stays safe
 
@@ -88,7 +88,7 @@ ssh resolves every generated file in one namespace where the first match wins, s
 
 Group membership lives on the host record. Removing a host removes it from every group, no group can list a host that doesn't exist, and a group has to be declared before a host can join it, so a typo fails instead of creating one. The reverse holds too: a group, a child or a reason that hosts still rely on can't be removed, and the refusal names them. Before writing Ansible, ari checks that every host sits in exactly one zone and every group goes to exactly one file. Any failure writes nothing and lists every problem at once.
 
-Generated files are output. ari records a hash of everything it writes and won't overwrite a file that was edited by hand since, unless you pass `--force` after looking at it. Importing a file adopts it for the guard only when the inventory now holds all of it: a conflict, a refused host, or anything ari couldn't represent leaves the file alone until you've checked it. Writes go to a temp file and get renamed into place, and `Include config.d/*.conf` never matches the temp name, so ssh never reads half a file.
+Generated files are output. ari records a hash of everything it writes and won't overwrite a file that was edited by hand since, unless you pass `--force` after looking at it. Importing a file adopts it for the guard only when the inventory now holds all of it: a conflict, a refused host, or anything ari couldn't represent leaves the file alone until you've checked it. Export writes every file to a temp name beside its target before renaming any into place, so a write that fails leaves every file and the guard as they were, and `Include config.d/*.conf` never matches the temp name, so ssh never reads half a file.
 
 Every host is written out in full, with no `Host *` blocks. Those ignore file boundaries, and `IdentityFile` accumulates across matching blocks, so a default in one file would offer its key to every host you have.
 
