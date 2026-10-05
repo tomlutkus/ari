@@ -370,6 +370,7 @@ Every \f[B]--opt\f[R] given for one
 keyword in one command is that
 keyword\[aq]s new value.
 Two or more make a list, which only
+\f[B]CertificateFile\f[R],
 \f[B]LocalForward\f[R],
 \f[B]RemoteForward\f[R],
 \f[B]DynamicForward\f[R] and
@@ -617,11 +618,10 @@ their hashes go to the guard, so
 exporting over them afterwards passes.
 If anything conflicted, was refused, or
 couldn\[aq]t be represented, such as a
-skipped \f[V]Host *\f[R] block or a
-second LocalForward, the files are not
-adopted, and an export over one of them
-needs \f[B]--force\f[R] once you\[aq]ve
-checked it.
+skipped \f[V]Host *\f[R] block, the
+files are not adopted, and an export
+over one of them needs \f[B]--force\f[R]
+once you\[aq]ve checked it.
 .PP
 .TS
 tab(@);
@@ -672,12 +672,13 @@ A new host without \f[B]Port\f[R] gets
 when the inventory\[aq]s default port
 differs.
 \f[B]HostName\f[R], \f[B]User\f[R] and
-\f[B]Port\f[R] become fields,
-\f[B]IdentityFile\f[R] the host\[aq]s
-key, and every other keyword is kept as
-an ssh option, in order.
+\f[B]Port\f[R] become fields, each
+\f[B]IdentityFile\f[R] one of the
+host\[aq]s keys in order, and every
+other keyword is kept as an ssh option,
+in order.
 Export writes \f[B]IdentitiesOnly
-yes\f[R] after a key unless the host
+yes\f[R] after the keys unless the host
 sets IdentitiesOnly itself, so a block
 with a key and no IdentitiesOnly is
 stored with \f[B]IdentitiesOnly no\f[R],
@@ -693,7 +694,21 @@ ari, except for \f[B]IdentityFile\f[R],
 \f[B]RemoteForward\f[R],
 \f[B]DynamicForward\f[R] and
 \f[B]SendEnv\f[R]: ssh uses every one of
-those, ari keeps the first and warns.
+those, and so does ari, as a list.
+ssh also adds those from every later
+block a name matches, so a later block
+naming every token a host has, exactly
+as written, since ssh matches Host
+tokens case and all, adds its keys and
+lines of those keywords after the
+host\[aq]s own, and IdentitiesOnly is
+the first block\[aq]s that sets it.
+A later block naming only some of a
+host\[aq]s tokens applies to those
+alone, which one record can\[aq]t hold,
+so its keys and lines are compared
+instead, and a different list is a
+conflict.
 A block without \f[B]User\f[R] stays
 without one, so ssh uses whoever
 connects.
@@ -1302,6 +1317,7 @@ instead of the defaults\[aq] list, not
 on top of them.
 .PP
 Options take a string.
+\f[B]CertificateFile\f[R],
 \f[B]LocalForward\f[R],
 \f[B]RemoteForward\f[R],
 \f[B]DynamicForward\f[R] and

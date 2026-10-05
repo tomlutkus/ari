@@ -586,7 +586,7 @@ def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | N
         return f"Port {incoming.port} differs from {inventory.port(existing)}"
     stated, keys = inventory.key_paths(incoming.keys), inventory.identity_files(existing)
     if stated and keys and stated != keys:
-        return f"IdentityFile {' '.join(stated)} differs from {' '.join(keys)}"
+        return f"IdentityFile {', '.join(stated)} differs from {', '.join(keys)}"
     if incoming.notes and existing.notes and incoming.notes != existing.notes:
         return f"notes {incoming.notes!r} differ from {existing.notes!r}"
     for name, data in incoming.modules.items():

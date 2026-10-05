@@ -51,9 +51,12 @@ def _quote(value: str) -> str:
 # second time, and ssh would quietly take the first.
 _OWN_FIELD = {"host": None, "match": None, "hostname": "hostname", "user": "user", "port": "port", "identityfile": "keys"}
 
-# Options that can hold a list, one line each: ssh uses every line of these, where for any other
-# keyword it reads the first and ignores the rest. (IdentityFile is the keys field.)
-LISTABLE = {"localforward", "remoteforward", "dynamicforward", "sendenv"}
+# Keywords ssh uses every value of when they repeat, in a block or across the blocks a host
+# matches. Every other keyword is first value wins.
+ACCUMULATING = {"identityfile", "certificatefile", "localforward", "remoteforward", "dynamicforward", "sendenv"}
+
+# Options that can hold a list, one line each: the accumulating ones, IdentityFile being the keys field.
+LISTABLE = ACCUMULATING - {"identityfile"}
 
 Value = str | list[str]
 
@@ -84,6 +87,10 @@ def _options_map(data: Any, where: str) -> dict[str, Value]:
                 raise HostsError(f"{where}: option {keyword} must be one line")
         out[keyword] = value[0] if isinstance(value, list) and len(value) == 1 else value
     return out
+
+
+def _shown(value: Value) -> str:
+    return ", ".join(value) if isinstance(value, list) else value
 
 
 def lines(keyword: str, value: Value) -> list[str]:
@@ -144,23 +151,25 @@ def parse(text: str, source: str) -> tuple[list[Block], list[str]]:
     return blocks, warnings
 
 
-# Keywords ssh uses every value of when they repeat. Every other keyword is first value wins.
-# The record holds one value per keyword, so a repeat of these loses something ssh would use.
-ACCUMULATING = {"identityfile", "certificatefile", "localforward", "remoteforward", "dynamicforward", "sendenv"}
-
-
 def to_hosts(
-    block: Block, source: str, warnings: list[str], dropped: list[str] | None = None, keys: dict[str, KeyDef] | None = None
+    block: Block,
+    source: str,
+    warnings: list[str],
+    dropped: list[str] | None = None,
+    keys: dict[str, KeyDef] | None = None,
+    settle: bool = True,
 ) -> list[Host]:
     """The hosts one block names, or none when it can't be read. Whatever ssh would have used but
-    the record can't hold goes into dropped as well as warnings. Each IdentityFile is declared in
-    keys, the source's own declarations, once per path.
+    the record can't hold goes into dropped as well as warnings. Every IdentityFile becomes one of
+    the host's keys, in order, declared in keys, the source's own declarations, once per path.
+    Every line of another accumulating keyword is kept, several making a list.
 
     What the block doesn't set stays unset, hostname empty and port None, so a block for a host
     the inventory already has, a later one or a re-import, compares and fills only what it states.
     complete() fills the rest for a host that's new. A block without User stays without one: ssh
     would use whoever connects, and pinning the importing login would be wrong on any other
-    machine.
+    machine. settle=False leaves IdentitiesOnly as stated, for _gather to settle once every block
+    for a name is in.
 
     Without HostName, ssh connects to whichever token was typed, so a Host line with several
     tokens names one host per token, each with the block's settings. With HostName, the tokens
@@ -171,18 +180,25 @@ def to_hosts(
     host = Host(name=name, hostname="", aliases=aliases)
     where = f"{source}:{block.line} ({name})"
     seen: set[str] = set()
-    identities_only: tuple[str, str] | None = None
-    extra: dict[str, str] = {}
+    extra: dict[str, Value] = {}
+    listed: dict[str, str] = {}  # an accumulating keyword's first spelling, which its list goes under
 
     for keyword, value in block.options:
         lowered = keyword.lower()
-        if lowered in seen:
-            if lowered in ACCUMULATING:
-                message = f"{where}: second {keyword} not kept; ssh uses every {keyword}, ari stores one"
-                warnings.append(message)
-                dropped.append(message)
+        if lowered == "identityfile":
+            name = declare_key(keys, _single(value))
+            if name in host.keys:
+                warnings.append(f"{where}: IdentityFile {value} given twice; kept once")
             else:
-                warnings.append(f"{where}: second {keyword} ignored, ssh uses the first")
+                host.keys.append(name)
+            continue
+        if lowered in LISTABLE:
+            first = listed.setdefault(lowered, keyword)
+            have = extra.get(first)
+            extra[first] = value if have is None else [*(have if isinstance(have, list) else [have]), value]
+            continue
+        if lowered in seen:
+            warnings.append(f"{where}: second {keyword} ignored, ssh uses the first")
             continue
         seen.add(lowered)
         match lowered:
@@ -198,21 +214,13 @@ def to_hosts(
                     warnings.append(message)
                     dropped.append(message)
                     return []
-            case "identityfile":
-                host.keys = [declare_key(keys, _single(value))]
-            case "identitiesonly":
-                identities_only = (keyword, value)
             case _:
                 extra[keyword] = value
 
-    # Export writes "IdentitiesOnly yes" after the keys. Keep anything that would resolve differently.
-    if identities_only and not (host.keys and identities_only[1].lower() == "yes"):
-        extra[identities_only[0]] = identities_only[1]
-    elif host.keys and not identities_only:
-        extra["IdentitiesOnly"] = "no"
-
     if extra:
         host.modules["ssh"] = {"options": extra}
+    if settle:
+        _settle(host)
     if host.hostname or not aliases:
         return [host]
     hosts = []
@@ -244,6 +252,87 @@ def render(inventory: Inventory, hosts: list[Host]) -> str:
         out += [f"    {line}" for keyword, value in extra.items() for line in lines(keyword, value)]
         out.append("")
     return "\n".join(out)
+
+
+def _tidy(host: Host) -> None:
+    """Drop the ssh options table, and the module's entry, once they're empty."""
+    ssh = host.modules.get("ssh")
+    if ssh is not None and not ssh.get("options"):
+        ssh.pop("options", None)
+        if not ssh:
+            del host.modules["ssh"]
+
+
+def _settle(host: Host) -> None:
+    """Export writes IdentitiesOnly yes after the keys, so a stated yes on a host with keys goes
+    without saying. Keep anything that would resolve differently: a no, or keys with none stated."""
+    options = host.modules.setdefault("ssh", {}).setdefault("options", {})
+    stated = next((k for k in options if k.lower() == "identitiesonly"), None)
+    if stated and host.keys and options[stated].lower() == "yes":
+        del options[stated]
+    elif host.keys and not stated:
+        options["IdentitiesOnly"] = "no"
+    _tidy(host)
+
+
+def _gather(blocks: list[tuple[list[str], list[Host]]]) -> list[Host]:
+    """ssh uses every value of an accumulating keyword from every block a name matches. A later
+    block naming every token of a host from an earlier one applies wherever that host does, so its
+    keys and accumulating options join that host's, and IdentitiesOnly is the first block's that
+    states it. What else it says reaches import as before, filling what the first left unset. A
+    later block naming only some of them applies to those alone, which one record can't say, so it
+    stays as it is and import compares it like any other. ssh matches Host tokens as typed, case
+    included, and so does this."""
+    out: list[Host] = []
+    index: dict[str, Host] = {}  # each token, by the host that first had it
+    for tokens, hosts in blocks:
+        covers = set(tokens)
+        given: list[Host] = []  # earlier hosts this block's values went to: a block split by token adds once
+        for host in hosts:
+            out.append(host)
+            earlier = index.get(host.name)
+            if earlier is None:
+                for token in host.tokens():
+                    index.setdefault(token, host)
+            elif set(earlier.tokens()) <= covers:
+                if not any(e is earlier for e in given):
+                    _add(earlier, host)
+                    given.append(earlier)
+                _strip(host)
+    return out
+
+
+def _accumulated(host: Host) -> dict[str, Value]:
+    """A host's accumulating options and IdentitiesOnly, taken off it."""
+    options = host.modules.get("ssh", {}).get("options", {})
+    taken = {k: options.pop(k) for k in list(options) if k.lower() in LISTABLE or k.lower() == "identitiesonly"}
+    return taken
+
+
+def _strip(host: Host) -> None:
+    host.keys = []
+    _accumulated(host)
+    _tidy(host)
+
+
+def _add(earlier: Host, host: Host) -> None:
+    """A later block's keys and accumulating options after the earlier host's own, and its
+    IdentitiesOnly where the earlier host states none."""
+    earlier.keys += [k for k in host.keys if k not in earlier.keys]
+    ours = earlier.modules.setdefault("ssh", {}).setdefault("options", {})
+    for keyword, value in _accumulated(host).items():
+        mine = next((k for k in ours if k.casefold() == keyword.casefold()), None)
+        if keyword.lower() == "identitiesonly":
+            if mine is None:
+                ours[keyword] = value
+            continue
+        values = [*_values(ours.get(mine)), *_values(value)]
+        ours[mine or keyword] = values[0] if len(values) == 1 else values
+    _tidy(earlier)
+
+
+def _values(value: Value | None) -> list[str]:
+    return [] if value is None else value if isinstance(value, list) else [value]
 
 
 class SshModule(Module):
@@ -285,14 +374,15 @@ class SshModule(Module):
 
     def conflicts(self, existing: dict[str, Any], incoming: dict[str, Any], defaults: dict[str, Any]) -> list[str]:
         """An option the record already has, from the host or the inventory default, with a
-        different value in the source. Keywords compare the way ssh reads them, case-insensitively."""
+        different value in the source, a list compared whole. Keywords compare the way ssh reads
+        them, case-insensitively."""
         effective = {k.casefold(): (k, v) for k, v in defaults.get("options", {}).items()}
         effective.update({k.casefold(): (k, v) for k, v in existing.get("options", {}).items()})
         out = []
         for keyword, value in incoming.get("options", {}).items():
             have = effective.get(keyword.casefold())
             if have and have[1] != value:
-                out.append(f"{keyword} {value} differs from {have[1]}")
+                out.append(f"{keyword} {_shown(value)} differs from {_shown(have[1])}")
         return out
 
     def merge(self, existing: dict[str, Any], incoming: dict[str, Any]) -> bool:
@@ -337,5 +427,7 @@ class SshModule(Module):
         skipped = bool(warnings)  # everything parse warns about is left out
         dropped: list[str] = []
         keys: dict[str, KeyDef] = {}
-        hosts = [h for b in blocks for h in to_hosts(b, tilde(path), warnings, dropped, keys)]
+        hosts = _gather([(b.tokens, to_hosts(b, tilde(path), warnings, dropped, keys, settle=False)) for b in blocks])
+        for host in hosts:
+            _settle(host)
         return ImportResult(hosts, warnings, [(path, data)], lossy=skipped or bool(dropped), keys=keys)

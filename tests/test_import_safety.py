@@ -128,16 +128,27 @@ def test_a_clean_import_is_adopted_as_before(personal, capsys):
 
 
 @pytest.mark.parametrize("keyword, first, second", [
-    ("IdentityFile", "~/.ssh/a", "~/.ssh/b"),
     ("LocalForward", "8080 localhost:80", "8443 localhost:443"),
+    ("RemoteForward", "9000 localhost:22", "9001 localhost:22"),
+    ("DynamicForward", "1080", "1081"),
     ("SendEnv", "LANG", "LC_ALL"),
+    ("CertificateFile", "~/.ssh/a-cert.pub", "~/.ssh/b-cert.pub"),
 ])
-def test_a_repeat_ssh_would_use_is_reported_and_unadopted(personal, tmp_path, capsys, keyword, first, second):
-    path = source(tmp_path, f"Host r\n  HostName 192.0.2.5\n  {keyword} {first}\n  {keyword} {second}\n")
-    assert run("import", "ssh", path) == 0
+def test_every_line_ssh_would_use_is_kept_and_the_file_adopted(personal, capsys, keyword, first, second):
+    target = personal / "ssh" / "10-personal.conf"
+    target.write_text(f"Host r\n  HostName 192.0.2.5\n  {keyword} {first}\n  {keyword} {second}\n")
+    assert run("import", "ssh", str(target)) == 0
     err = capsys.readouterr().err
-    assert f"second {keyword} not kept; ssh uses every {keyword}, ari stores one" in err
-    assert "not adopted" in err
+    assert "not kept" not in err and "not adopted" not in err
+    assert host(personal, "r")["modules"]["ssh"]["options"] == {keyword: [first, second]}
+    assert run("export") == 0
+
+
+def test_every_identity_file_is_a_key_in_order(personal, tmp_path, capsys):
+    text = "Host r\n  HostName 192.0.2.5\n  IdentityFile ~/.ssh/b\n  IdentityFile ~/.ssh/a\n  IdentityFile ~/.ssh/b\n"
+    assert run("import", "ssh", source(tmp_path, text)) == 0
+    assert "IdentityFile ~/.ssh/b given twice; kept once" in capsys.readouterr().err
+    assert host(personal, "r")["keys"] == ["b", "a"]
 
 
 def test_accumulating_keywords_match_ssh():
@@ -297,3 +308,96 @@ def test_ansible_comments_alone_are_still_adopted(both, tmp_path, capsys):
     assert run("-i", "work", "import", "ansible", str(tmp_path)) == 0
     err = capsys.readouterr().err
     assert "comment not imported" in err and "not adopted" not in err
+
+
+# A later block for the same name adds what ssh accumulates; one named by an alias is compared
+
+
+def test_a_later_block_adds_its_keys_and_forwards(personal, tmp_path, capsys):
+    text = (
+        "Host db\n  HostName 192.0.2.10\n  IdentityFile ~/.ssh/a\n  LocalForward 5432 localhost:5432\n\n"
+        "Host db\n  IdentityFile ~/.ssh/b\n  localforward 8080 localhost:80\n  User admin\n"
+    )
+    assert run("import", "ssh", source(tmp_path, text)) == 0
+    assert "conflict" not in capsys.readouterr().err
+    db = host(personal, "db")
+    assert (db["keys"], db["user"]) == (["a", "b"], "admin")
+    assert db["modules"]["ssh"]["options"] == {
+        "LocalForward": ["5432 localhost:5432", "8080 localhost:80"],
+        "IdentitiesOnly": "no",
+    }
+
+
+@pytest.mark.parametrize("first, later, stored", [
+    ("  IdentitiesOnly yes\n", "", None),  # the first block's yes wins over the later block's silence
+    ("", "  IdentitiesOnly yes\n", None),  # the first to state it is the later block
+    ("  IdentitiesOnly no\n", "  IdentitiesOnly yes\n", "no"),
+    ("", "", "no"),
+])
+def test_identities_only_is_settled_across_blocks(personal, tmp_path, first, later, stored):
+    text = f"Host db\n  HostName 192.0.2.10\n  IdentityFile ~/.ssh/a\n{first}\nHost db\n  IdentityFile ~/.ssh/b\n{later}"
+    assert run("import", "ssh", source(tmp_path, text)) == 0
+    options = host(personal, "db").get("modules", {}).get("ssh", {}).get("options", {})
+    assert options.get("IdentitiesOnly") == stored
+
+
+def test_a_later_block_by_alias_with_other_keys_conflicts(personal, tmp_path, capsys):
+    text = "Host db dbx\n  HostName 192.0.2.10\n  IdentityFile ~/.ssh/a\n\nHost dbx\n  IdentityFile ~/.ssh/b\n"
+    assert run("import", "ssh", source(tmp_path, text)) == 1
+    assert "dbx: IdentityFile ~/.ssh/b differs from ~/.ssh/a; not merged" in capsys.readouterr().err
+    assert host(personal, "db")["keys"] == ["a"]
+
+
+def test_a_forward_list_compares_whole_on_reimport(personal, tmp_path, capsys):
+    text = "Host p\n  HostName 192.0.2.6\n  LocalForward 1 localhost:1\n  LocalForward 2 localhost:2\n"
+    run("import", "ssh", source(tmp_path, text))
+    capsys.readouterr()
+    assert run("import", "ssh", source(tmp_path, text, "same.conf")) == 0
+    assert "1 unchanged (p)" in capsys.readouterr().out
+    fewer = "Host p\n  HostName 192.0.2.6\n  LocalForward 1 localhost:1\n"
+    assert run("import", "ssh", source(tmp_path, fewer, "b.conf")) == 1
+    assert "LocalForward 1 localhost:1 differs from 1 localhost:1, 2 localhost:2; not merged" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(shutil.which("ssh") is None, reason="needs the ssh client")
+def test_ssh_sees_the_export_as_it_saw_the_source(personal, capsys):
+    """Every accumulating keyword repeated, and again in a later block naming every token of the
+    host: ssh -G for each alias of the export matches ssh -G of the source."""
+    target = personal / "ssh" / "10-personal.conf"
+    target.write_text(
+        "Host app app.lab\n  HostName 192.0.2.20\n  User deploy\n"
+        "  IdentityFile ~/.ssh/app-ed25519\n  IdentityFile \"~/.ssh/old key\"\n"
+        "  CertificateFile ~/.ssh/app-ed25519-cert.pub\n  CertificateFile ~/.ssh/ca/old-cert.pub\n"
+        "  LocalForward 5432 localhost:5432\n  LocalForward 8080 localhost:80\n"
+        "  RemoteForward 9000 localhost:22\n  RemoteForward 9001 localhost:22\n"
+        "  DynamicForward 1080\n  DynamicForward 1081\n"
+        "  SendEnv LANG\n  SendEnv LC_*\n  IdentitiesOnly yes\n\n"
+        "Host app.lab app\n  IdentityFile ~/.ssh/third\n  LocalForward 9090 localhost:90\n  SendEnv TZ\n  ProxyJump bastion\n\n"
+        "Host bastion\n  HostName 198.51.100.1\n  Port 2222\n  IdentityFile ~/.ssh/bastion\n"
+    )
+    aliases = ["app", "app.lab", "bastion"]
+
+    def resolved(conf):
+        return {a: subprocess.run(["ssh", "-G", "-F", str(conf), a], capture_output=True, text=True, check=True).stdout for a in aliases}
+
+    before = resolved(target)
+    assert run("import", "ssh", str(target)) == 0
+    assert "not adopted" not in capsys.readouterr().err
+    assert run("export") == 0
+    assert "wrote" in capsys.readouterr().out
+    assert resolved(target) == before
+
+
+def test_a_later_block_naming_some_tokens_is_compared_not_added(personal, tmp_path, capsys):
+    """Host app alone doesn't apply when app.lab is typed, so its key can't join the record."""
+    text = "Host app app.lab\n  HostName 192.0.2.20\n  IdentityFile ~/.ssh/a\n\nHost app\n  IdentityFile ~/.ssh/b\n"
+    assert run("import", "ssh", source(tmp_path, text)) == 1
+    assert "app: IdentityFile ~/.ssh/b differs from ~/.ssh/a; not merged" in capsys.readouterr().err
+    assert host(personal, "app")["keys"] == ["a"]
+
+
+def test_a_later_block_in_another_case_is_compared_not_added(personal, tmp_path, capsys):
+    """ssh matches Host tokens as typed: Host DB doesn't apply when db is typed."""
+    text = "Host db\n  HostName 192.0.2.10\n  IdentityFile ~/.ssh/a\n\nHost DB\n  IdentityFile ~/.ssh/b\n"
+    assert run("import", "ssh", source(tmp_path, text)) == 1
+    assert "IdentityFile ~/.ssh/b differs from ~/.ssh/a; not merged" in capsys.readouterr().err
