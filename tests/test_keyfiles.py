@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +56,22 @@ def put(path: Path, text: str, mode: int = 0o600) -> Path:
 
 def keygen(*argv: str) -> None:
     subprocess.run([KEYGEN, "-q", *argv], check=True, stdin=subprocess.DEVNULL)
+
+
+@pytest.fixture(autouse=True)
+def utc():
+    """Certificate dates in UTC, for ssh-keygen and ari alike. ssh-keygen -V reads a date as local
+    standard time, so where winter is negative DST, as in Europe/Dublin, a December date signs as
+    23:00 the day before, and ssh-keygen -L rightly prints that."""
+    saved = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    yield
+    if saved is None:
+        del os.environ["TZ"]
+    else:
+        os.environ["TZ"] = saved
+    time.tzset()
 
 
 @pytest.fixture
