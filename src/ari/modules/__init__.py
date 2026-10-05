@@ -47,6 +47,10 @@ class ImportResult:
     # The keys the hosts and defaults name, as the source declares them. Import maps each onto
     # the inventory's key at the same path, or declares it there.
     keys: dict[str, KeyDef] = field(default_factory=dict)
+    # For each host, the names its source applies to, when they can differ from the host's: ssh
+    # gives a block's settings only to the tokens on its Host line, exactly as typed. A host
+    # already in the inventory takes changes only from a block naming every token it has.
+    covers: list[set[str]] | None = None
 
 
 class Module:

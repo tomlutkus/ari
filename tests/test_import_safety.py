@@ -401,3 +401,44 @@ def test_a_later_block_in_another_case_is_compared_not_added(personal, tmp_path,
     text = "Host db\n  HostName 192.0.2.10\n  IdentityFile ~/.ssh/a\n\nHost DB\n  IdentityFile ~/.ssh/b\n"
     assert run("import", "ssh", source(tmp_path, text)) == 1
     assert "IdentityFile ~/.ssh/b differs from ~/.ssh/a; not merged" in capsys.readouterr().err
+
+
+# A Host line that leaves out a name the host answers to can't change the whole record
+
+
+@pytest.mark.parametrize("later, left_out", [
+    ("Host app\n  ProxyJump bastion\n", "app.lab"),  # one token of two
+    ("Host app.lab\n  ForwardAgent yes\n", "app"),  # by alias alone
+    ("Host APP app.lab\n  ForwardAgent yes\n", "app"),  # ssh matches as typed: APP isn't app
+])
+def test_a_partial_host_line_is_refused_in_the_same_file(personal, capsys, later, left_out):
+    target = personal / "ssh" / "10-personal.conf"
+    target.write_text(f"Host app app.lab\n  HostName 192.0.2.20\n\n{later}")
+    assert run("import", "ssh", str(target)) == 1
+    err = capsys.readouterr().err
+    assert f"its Host line leaves out {left_out}, so ssh applies it to the rest alone; not merged" in err
+    assert "not adopted" in err
+    assert "modules" not in host(personal, "app")
+
+
+def test_a_partial_host_line_is_refused_on_a_later_import(personal, tmp_path, capsys):
+    run("import", "ssh", source(tmp_path, "Host app app.lab\n  HostName 192.0.2.20\n"))
+    capsys.readouterr()
+    assert run("import", "ssh", source(tmp_path, "Host app.lab\n  ForwardAgent yes\n", "b.conf")) == 1
+    assert "app.lab: its Host line leaves out app, so ssh applies it to the rest alone; not merged" in capsys.readouterr().err
+    assert "modules" not in host(personal, "app")
+
+
+def test_a_partial_host_line_that_changes_nothing_is_unchanged(personal, tmp_path, capsys):
+    run("import", "ssh", source(tmp_path, "Host app app.lab\n  HostName 192.0.2.20\n  User admin\n"))
+    capsys.readouterr()
+    assert run("import", "ssh", source(tmp_path, "Host app\n  HostName 192.0.2.20\n  User admin\n", "b.conf")) == 0
+    assert "1 unchanged (app)" in capsys.readouterr().out
+
+
+def test_a_full_host_line_still_fills_what_was_unset(personal, capsys):
+    target = personal / "ssh" / "10-personal.conf"
+    target.write_text("Host app app.lab\n  HostName 192.0.2.20\n\nHost app.lab app\n  ForwardAgent yes\n  ProxyJump bastion\n")
+    assert run("import", "ssh", str(target)) == 0
+    assert "not adopted" not in capsys.readouterr().err
+    assert host(personal, "app")["modules"]["ssh"]["options"] == {"ForwardAgent": "yes", "ProxyJump": "bastion"}

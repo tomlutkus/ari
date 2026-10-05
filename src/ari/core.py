@@ -624,6 +624,14 @@ def _merge(inventory: Inventory, existing: Host, incoming: Host) -> bool:
     return changed
 
 
+def _settings(host: Host) -> dict:
+    """What a host's record says about connecting to it, whatever name is typed."""
+    data = host.to_dict()
+    for name_only in ("aliases", "last_updated"):
+        data.pop(name_only, None)
+    return data
+
+
 def _adopt_keys(target: Inventory, keys: dict[str, KeyDef], hosts: list[Host], defaults: list[str]) -> list[str]:
     """Put the source's keys in the inventory's terms. A path the inventory declares keeps the
     inventory's name; a new one is declared under the source's name, numbered when that's taken.
@@ -743,7 +751,7 @@ def import_hosts(
         for token in host.tokens()
     }
 
-    for host in result.hosts:
+    for i, host in enumerate(result.hosts):
         clash = next((elsewhere[t.casefold()] for t in host.tokens() if t.casefold() in elsewhere), None)
         if clash:
             report.conflicts.append(f"{host.name}: already defined as {clash}")
@@ -778,6 +786,15 @@ def import_hosts(
         _strip_defaults(target, candidate)
         if candidate.to_dict() == existing.to_dict():
             report.unchanged.append(host.name)
+            continue
+        # ssh gives a block's settings only to the tokens it names, as typed: one that leaves out a
+        # name the host answers to, or writes it in another case, can't change what the whole
+        # record says. New aliases change nothing for the names it leaves out, so they still merge.
+        left_out = [t for t in existing.tokens() if result.covers is not None and t not in result.covers[i]]
+        if left_out and _settings(candidate) != _settings(existing):
+            report.conflicts.append(
+                f"{host.name}: its Host line leaves out {', '.join(left_out)}, so ssh applies it to the rest alone; not merged"
+            )
             continue
         problems = _host_problems(inventories, target, candidate, existing)
         if problems:

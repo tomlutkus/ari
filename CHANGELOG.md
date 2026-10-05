@@ -2,11 +2,12 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
-## Unreleased
+## 0.7.1 (2026-10-05)
 
 - The inventory format is version 3. Keys are declared once per inventory under `keys`, by name with their file's `path`, and hosts and defaults list the names in the order ssh offers them. Export writes an IdentityFile for each, then IdentitiesOnly yes once; Ansible gets the first key's file. A version 2 file is upgraded when it's read, each path declared under its file's stem and numbered on a clash, and saved as version 3 on its next write; every generated file stays the same.
 - ssh options CertificateFile, LocalForward, RemoteForward, DynamicForward and SendEnv can hold a list, written one line per value. Any other keyword keeps one value, since ssh reads only its first line.
 - ssh import keeps every IdentityFile, as the host's keys in order, and every line of CertificateFile, LocalForward, RemoteForward, DynamicForward and SendEnv, so a block repeating them no longer warns or leaves its file unadopted. A later block naming every token of a host adds its keys and those lines after the host's own, as ssh does; one naming only some of them is compared, and a different list is a conflict. Re-import compares a list whole.
+- Import refuses a change from a Host line that leaves out a name the host answers to, or writes one in another case, in the same file or a later import. ssh applies such a block only to the names it has, so filling its User, ProxyJump or any other setting into the record changed what the other names connect with. It can still add aliases.
 - `ari key` lists the declared keys of every inventory, with the hosts each reaches, defaults included. `ari key NAME --path PATH` declares a key or moves it, and every host using it follows; `--rm` is refused while the defaults or a host list it, naming them.
 - `--key` takes a declared key by name or by its file and is repeatable, in the order ssh offers them; `edit --unkey` drops one and runs first, and `--key ''` goes back to the defaults' keys. An undeclared key is refused, with the command that declares it. Import declares each new key file it reads under the file's stem and lists the keys it declared. `add`, `edit` and `export` refuse a key listed twice.
 - Every `--opt` given for one keyword in one command is its new value, so repeating `--opt LocalForward=...` sets several forwards. Repeating a keyword ssh reads once, or setting and clearing one together, is refused.

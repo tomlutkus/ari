@@ -15,7 +15,7 @@
 . ftr VB CB
 . ftr VBI CBI
 .\}
-.TH "ARI" "1" "October 2026" "ari 0.6.1" "User Commands"
+.TH "ARI" "1" "October 2026" "ari 0.7.1" "User Commands"
 .hy
 .SH NAME
 .PP
@@ -703,12 +703,17 @@ tokens case and all, adds its keys and
 lines of those keywords after the
 host\[aq]s own, and IdentitiesOnly is
 the first block\[aq]s that sets it.
-A later block naming only some of a
-host\[aq]s tokens applies to those
-alone, which one record can\[aq]t hold,
-so its keys and lines are compared
-instead, and a different list is a
-conflict.
+A block whose Host line leaves out a
+name the host answers to, or writes one
+in another case, applies only to the
+names it has, which one record can\[aq]t
+hold.
+Whether it comes later in the same file
+or in a later import, it can still add
+aliases, and anything else it would
+change is a conflict: its keys and lines
+of those keywords are compared, and a
+setting it would fill is refused.
 A block without \f[B]User\f[R] stays
 without one, so ssh uses whoever
 connects.

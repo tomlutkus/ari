@@ -275,31 +275,33 @@ def _settle(host: Host) -> None:
     _tidy(host)
 
 
-def _gather(blocks: list[tuple[list[str], list[Host]]]) -> list[Host]:
+def _gather(blocks: list[tuple[list[str], list[Host]]]) -> tuple[list[Host], list[set[str]]]:
     """ssh uses every value of an accumulating keyword from every block a name matches. A later
     block naming every token of a host from an earlier one applies wherever that host does, so its
     keys and accumulating options join that host's, and IdentitiesOnly is the first block's that
     states it. What else it says reaches import as before, filling what the first left unset. A
     later block naming only some of them applies to those alone, which one record can't say, so it
-    stays as it is and import compares it like any other. ssh matches Host tokens as typed, case
-    included, and so does this."""
+    stays as it is, and import refuses whatever it would change. ssh matches Host tokens as typed,
+    case included, and so does this. Returns the hosts, and for each the tokens of its block."""
     out: list[Host] = []
+    covers: list[set[str]] = []
     index: dict[str, Host] = {}  # each token, by the host that first had it
     for tokens, hosts in blocks:
-        covers = set(tokens)
+        named = set(tokens)
         given: list[Host] = []  # earlier hosts this block's values went to: a block split by token adds once
         for host in hosts:
             out.append(host)
+            covers.append(set(tokens))
             earlier = index.get(host.name)
             if earlier is None:
                 for token in host.tokens():
                     index.setdefault(token, host)
-            elif set(earlier.tokens()) <= covers:
+            elif set(earlier.tokens()) <= named:
                 if not any(e is earlier for e in given):
                     _add(earlier, host)
                     given.append(earlier)
                 _strip(host)
-    return out
+    return out, covers
 
 
 def _accumulated(host: Host) -> dict[str, Value]:
@@ -427,7 +429,7 @@ class SshModule(Module):
         skipped = bool(warnings)  # everything parse warns about is left out
         dropped: list[str] = []
         keys: dict[str, KeyDef] = {}
-        hosts = _gather([(b.tokens, to_hosts(b, tilde(path), warnings, dropped, keys, settle=False)) for b in blocks])
+        hosts, covers = _gather([(b.tokens, to_hosts(b, tilde(path), warnings, dropped, keys, settle=False)) for b in blocks])
         for host in hosts:
             _settle(host)
-        return ImportResult(hosts, warnings, [(path, data)], lossy=skipped or bool(dropped), keys=keys)
+        return ImportResult(hosts, warnings, [(path, data)], lossy=skipped or bool(dropped), keys=keys, covers=covers)
