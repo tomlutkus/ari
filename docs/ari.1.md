@@ -2,7 +2,7 @@
 title: ARI
 section: 1
 header: User Commands
-footer: ari 0.7.1
+footer: ari 0.8.0
 date: October 2026
 ---
 
