@@ -2,6 +2,12 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
+## Unreleased
+
+- The inventory format is version 3. Keys are declared once per inventory under `keys`, by name with their file's `path`, and hosts and defaults list the names in the order ssh offers them. Export writes an IdentityFile for each, then IdentitiesOnly yes once; Ansible gets the first key's file. A version 2 file is upgraded when it's read, each path declared under its file's stem and numbered on a clash, and saved as version 3 on its next write; every generated file stays the same.
+- ssh options LocalForward, RemoteForward, DynamicForward and SendEnv can hold a list, written one line per value. Any other keyword keeps one value, since ssh reads only its first line.
+- `--key PATH` names the key declared at that path, declaring one under the file's stem when there's none. Import does the same for every key file it reads and lists the keys it declared. `add`, `edit` and `export` refuse a key that isn't declared or is listed twice.
+
 ## 0.6.1 (2026-10-05)
 
 - ssh import reads a Host line with several names and no HostName as one host per name, each connecting to its own name, as ssh does. Before, the other names became aliases of the first and connected to it.

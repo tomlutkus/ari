@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import HostsError
-from ..models import Host, Inventory, check_port
+from ..models import Host, Inventory, KeyDef, check_port, declare_key
 from ..paths import tilde
 from . import ImportResult, Module, Output
 
@@ -49,13 +49,22 @@ def _quote(value: str) -> str:
 
 # Keywords the host record or the block structure already covers. As options they'd be written a
 # second time, and ssh would quietly take the first.
-_OWN_FIELD = {"host": None, "match": None, "hostname": "hostname", "user": "user", "port": "port", "identityfile": "ssh_key"}
+_OWN_FIELD = {"host": None, "match": None, "hostname": "hostname", "user": "user", "port": "port", "identityfile": "keys"}
+
+# Options that can hold a list, one line each: ssh uses every line of these, where for any other
+# keyword it reads the first and ignores the rest. (IdentityFile is the keys field.)
+LISTABLE = {"localforward", "remoteforward", "dynamicforward", "sendenv"}
+
+Value = str | list[str]
 
 
-def _options_map(data: Any, where: str) -> dict[str, str]:
-    if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+def _options_map(data: Any, where: str) -> dict[str, Value]:
+    """Options as stored: each keyword maps to a string, or to a list for the ones ssh uses every
+    line of. A list of one is stored as its string."""
+    if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, (str, list)) for k, v in data.items()):
         raise HostsError(f"{where}: options must map ssh keywords to strings")
     seen: dict[str, str] = {}
+    out: dict[str, Value] = {}
     for keyword, value in data.items():
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", keyword):
             raise HostsError(f"{where}: {keyword!r} isn't an ssh_config keyword")
@@ -65,12 +74,24 @@ def _options_map(data: Any, where: str) -> dict[str, str]:
         if keyword.lower() in _OWN_FIELD:
             own = _OWN_FIELD[keyword.lower()]
             raise HostsError(f"{where}: {keyword} can't be an option" + (f"; it's the {own} field" if own else ""))
-        if "\n" in value or "\r" in value:
-            raise HostsError(f"{where}: option {keyword} must be one line")
-    return dict(data)
+        if isinstance(value, list):
+            if keyword.lower() not in LISTABLE:
+                raise HostsError(f"{where}: option {keyword} takes one value; ssh reads only the first")
+            if not value or not all(isinstance(v, str) for v in value):
+                raise HostsError(f"{where}: option {keyword} must be a string or a non-empty list of strings")
+        for line in value if isinstance(value, list) else [value]:
+            if "\n" in line or "\r" in line:
+                raise HostsError(f"{where}: option {keyword} must be one line")
+        out[keyword] = value[0] if isinstance(value, list) and len(value) == 1 else value
+    return out
 
 
-def options(inventory: Inventory, host: Host) -> dict[str, str]:
+def lines(keyword: str, value: Value) -> list[str]:
+    """An option as ssh_config lines, KEYWORD VALUE, one per value."""
+    return [f"{keyword} {v}" for v in (value if isinstance(value, list) else [value])]
+
+
+def options(inventory: Inventory, host: Host) -> dict[str, Value]:
     """Effective ssh options: inventory defaults, overridden by the host. Keywords compare case-insensitively."""
     own = host.modules.get("ssh", {}).get("options", {})
     taken = {k.casefold() for k in own}
@@ -128,9 +149,12 @@ def parse(text: str, source: str) -> tuple[list[Block], list[str]]:
 ACCUMULATING = {"identityfile", "certificatefile", "localforward", "remoteforward", "dynamicforward", "sendenv"}
 
 
-def to_hosts(block: Block, source: str, warnings: list[str], dropped: list[str] | None = None) -> list[Host]:
+def to_hosts(
+    block: Block, source: str, warnings: list[str], dropped: list[str] | None = None, keys: dict[str, KeyDef] | None = None
+) -> list[Host]:
     """The hosts one block names, or none when it can't be read. Whatever ssh would have used but
-    the record can't hold goes into dropped as well as warnings.
+    the record can't hold goes into dropped as well as warnings. Each IdentityFile is declared in
+    keys, the source's own declarations, once per path.
 
     What the block doesn't set stays unset, hostname empty and port None, so a block for a host
     the inventory already has, a later one or a re-import, compares and fills only what it states.
@@ -142,6 +166,7 @@ def to_hosts(block: Block, source: str, warnings: list[str], dropped: list[str] 
     tokens names one host per token, each with the block's settings. With HostName, the tokens
     after the first are aliases of it."""
     dropped = [] if dropped is None else dropped
+    keys = {} if keys is None else keys
     name, *aliases = block.tokens
     host = Host(name=name, hostname="", aliases=aliases)
     where = f"{source}:{block.line} ({name})"
@@ -174,16 +199,16 @@ def to_hosts(block: Block, source: str, warnings: list[str], dropped: list[str] 
                     dropped.append(message)
                     return []
             case "identityfile":
-                host.ssh_key = _single(value)
+                host.keys = [declare_key(keys, _single(value))]
             case "identitiesonly":
                 identities_only = (keyword, value)
             case _:
                 extra[keyword] = value
 
-    # Export writes "IdentitiesOnly yes" next to every key. Keep anything that would resolve differently.
-    if identities_only and not (host.ssh_key and identities_only[1].lower() == "yes"):
+    # Export writes "IdentitiesOnly yes" after the keys. Keep anything that would resolve differently.
+    if identities_only and not (host.keys and identities_only[1].lower() == "yes"):
         extra[identities_only[0]] = identities_only[1]
-    elif host.ssh_key and not identities_only:
+    elif host.keys and not identities_only:
         extra["IdentitiesOnly"] = "no"
 
     if extra:
@@ -199,28 +224,26 @@ def to_hosts(block: Block, source: str, warnings: list[str], dropped: list[str] 
 
 
 def render(inventory: Inventory, hosts: list[Host]) -> str:
-    lines = [f"# Generated by ari from {inventory.path.name}. Do not edit.", ""]
+    out = [f"# Generated by ari from {inventory.path.name}. Do not edit.", ""]
     for host in sorted(hosts, key=lambda h: h.name.casefold()):
         for note in host.notes.splitlines():
-            lines.append(f"# {note}".rstrip())
-        lines.append("Host " + " ".join(_quote(t) for t in host.tokens()))
-        lines.append(f"    HostName {_quote(host.hostname)}")
+            out.append(f"# {note}".rstrip())
+        out.append("Host " + " ".join(_quote(t) for t in host.tokens()))
+        out.append(f"    HostName {_quote(host.hostname)}")
         user = inventory.user(host)
         if user:
-            lines.append(f"    User {_quote(user)}")
+            out.append(f"    User {_quote(user)}")
         port = inventory.port(host)
         if port != 22:
-            lines.append(f"    Port {port}")
+            out.append(f"    Port {port}")
         extra = options(inventory, host)
-        key = inventory.ssh_key(host)
-        if key:
-            lines.append(f"    IdentityFile {_quote(key)}")
-            if not any(k.lower() == "identitiesonly" for k in extra):
-                lines.append("    IdentitiesOnly yes")
-        for keyword, value in extra.items():
-            lines.append(f"    {keyword} {value}")
-        lines.append("")
-    return "\n".join(lines)
+        files = inventory.identity_files(host)
+        out += [f"    IdentityFile {_quote(path)}" for path in files]
+        if files and not any(k.lower() == "identitiesonly" for k in extra):
+            out.append("    IdentitiesOnly yes")
+        out += [f"    {line}" for keyword, value in extra.items() for line in lines(keyword, value)]
+        out.append("")
+    return "\n".join(out)
 
 
 class SshModule(Module):
@@ -294,7 +317,7 @@ class SshModule(Module):
             host.port = 22
 
     def describe(self, inventory: Inventory, host: Host) -> list[str]:
-        return [f"{k} {v}" for k, v in options(inventory, host).items()]
+        return [line for k, v in options(inventory, host).items() for line in lines(k, v)]
 
     def export(self, inventory: Inventory, hosts: list[Host], settings: Settings) -> list[Output]:
         return [Output(settings.path, render(inventory, hosts).encode("utf-8"), len(hosts))]
@@ -313,5 +336,6 @@ class SshModule(Module):
         blocks, warnings = parse(text, tilde(path))
         skipped = bool(warnings)  # everything parse warns about is left out
         dropped: list[str] = []
-        hosts = [h for b in blocks for h in to_hosts(b, tilde(path), warnings, dropped)]
-        return ImportResult(hosts, warnings, [(path, data)], lossy=skipped or bool(dropped))
+        keys: dict[str, KeyDef] = {}
+        hosts = [h for b in blocks for h in to_hosts(b, tilde(path), warnings, dropped, keys)]
+        return ImportResult(hosts, warnings, [(path, data)], lossy=skipped or bool(dropped), keys=keys)

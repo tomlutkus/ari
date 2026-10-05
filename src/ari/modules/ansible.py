@@ -17,7 +17,7 @@ from typing import Any
 import yaml
 
 from ..errors import HostsError
-from ..models import Defaults, GroupDef, Host, Inventory, check_port, check_token
+from ..models import Defaults, GroupDef, Host, Inventory, KeyDef, check_port, check_token, declare_key
 from ..paths import tilde
 from . import ImportResult, Module, Output
 
@@ -26,8 +26,8 @@ RESERVED_GROUPS = {"all", "ungrouped"}
 HEADER_WIDTH = 62  # a zone header, after the indent, as the files have it today
 MODE = 0o644  # inventory files are read by whoever runs the playbooks, not only by their owner
 
-# all.vars and host vars that map onto host fields
-_VARS = {"ansible_user": "user", "ansible_ssh_private_key_file": "ssh_key", "ansible_port": "port"}
+# all.vars and host vars that map onto host fields. The key file becomes a declared key.
+_VARS = {"ansible_user": "user", "ansible_ssh_private_key_file": "keys", "ansible_port": "port"}
 
 
 @dataclass(frozen=True)
@@ -103,6 +103,12 @@ def _header(text: str) -> str:
     return "    " + line + "─" * max(HEADER_WIDTH - len(line), 3)
 
 
+def _first_key(inventory: Inventory, names: list[str]) -> str | None:
+    """ansible_ssh_private_key_file takes one file: the first key's."""
+    paths = inventory.key_paths(names)
+    return paths[0] if paths else None
+
+
 def _host_vars(inventory: Inventory, host: Host) -> list[tuple[str, str | int]]:
     d = inventory.defaults
     out: list[tuple[str, str | int]] = [("ansible_host", host.hostname)]
@@ -112,8 +118,9 @@ def _host_vars(inventory: Inventory, host: Host) -> list[tuple[str, str | int]]:
         out.append(("ansible_user", host.user))
     if host.port is not None and host.port != (d.port or 22):
         out.append(("ansible_port", host.port))
-    if host.ssh_key is not None and host.ssh_key != d.ssh_key:
-        out.append(("ansible_ssh_private_key_file", host.ssh_key))
+    key = _first_key(inventory, host.keys)
+    if key is not None and key != _first_key(inventory, d.keys):
+        out.append(("ansible_ssh_private_key_file", key))
     return out
 
 
@@ -121,7 +128,11 @@ def render_hosts(inventory: Inventory, parts: list[tuple[str | None, list[Host]]
     d = inventory.defaults
     all_vars = [
         (k, v)
-        for k, v in (("ansible_user", d.user), ("ansible_ssh_private_key_file", d.ssh_key), ("ansible_port", d.port))
+        for k, v in (
+            ("ansible_user", d.user),
+            ("ansible_ssh_private_key_file", _first_key(inventory, d.keys)),
+            ("ansible_port", d.port),
+        )
         if v is not None
     ]
     lines = ["all:"]
@@ -193,6 +204,7 @@ class _Reader:
     route: dict[str, str] = field(default_factory=dict)  # group: the file that defines it
     referenced: dict[str, str] = field(default_factory=dict)  # child named but not defined: where
     members: dict[str, list[str]] = field(default_factory=dict)
+    keys: dict[str, KeyDef] = field(default_factory=dict)
     lossy: bool = False
 
     def _lose(self, message: str) -> None:
@@ -270,6 +282,8 @@ class _Reader:
             if field_name in self.defaults and self.defaults[field_name] != value:
                 self._lose(f"{where}: all.vars.{key} differs from an earlier file; kept the first")
                 continue
+            if field_name == "keys":
+                declare_key(self.keys, value)  # in the order it's read, so the default key is named first
             self.defaults[field_name] = value
 
     def _field(self, field_name: str, value: Any, where: str) -> Any:
@@ -315,7 +329,11 @@ class _Reader:
                 elif value is not None:
                     self._lose(f"{where}: description {value!r} isn't a string; not imported")
             elif key in _VARS:
-                setattr(host, _VARS[key], self._field(_VARS[key], value, where))
+                value = self._field(_VARS[key], value, where)
+                if _VARS[key] == "keys":
+                    host.keys = [declare_key(self.keys, value)] if value is not None else []
+                else:
+                    setattr(host, _VARS[key], value)
             else:
                 self._lose(f"{where}: {key} not imported")
         existing = self.hosts.get(name)
@@ -396,8 +414,21 @@ class _Reader:
         settings: dict[str, Any] = {"dir": tilde(directory), "hosts": hosts_file}
         if routes:
             settings["groups"] = dict(sorted(routes.items()))
-        defaults = Defaults(**self.defaults) if self.saw_vars else None
-        return ImportResult(list(self.hosts.values()), self.warnings, self.files, defaults, self.groups, settings, self.lossy)
+        defaults = None
+        if self.saw_vars:
+            path = self.defaults.get("keys")
+            keys = [declare_key(self.keys, path)] if path is not None else []
+            defaults = Defaults(self.defaults.get("user"), self.defaults.get("port"), keys)
+        return ImportResult(
+            list(self.hosts.values()),
+            self.warnings,
+            self.files,
+            defaults,
+            self.groups,
+            settings,
+            self.lossy,
+            keys=self.keys,
+        )
 
 
 class AnsibleModule(Module):

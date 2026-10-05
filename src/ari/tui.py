@@ -158,6 +158,9 @@ class HostForm(Screen[str | None]):
         """The host's own value for a text field, as the input shows it."""
         if self.host is None:
             return ""
+        if field == "ssh_key":
+            inventory = self.inventories[self.inventory]
+            return " ".join(inventory.keys[n].path if n in inventory.keys else n for n in self.host.keys)
         value = getattr(self.host, field)
         if field == "aliases":
             return " ".join(value)
@@ -170,7 +173,8 @@ class HostForm(Screen[str | None]):
         if field == "port":
             return f"{defaults.port or 22} (default)"
         if field == "ssh_key":
-            return f"{defaults.ssh_key} (default)" if defaults.ssh_key else ""
+            paths = self.inventories[self.inventory].key_paths(defaults.keys)
+            return f"{' '.join(paths)} (default)" if paths else ""
         if field == "aliases":
             return "space-separated"
         return ""
@@ -192,7 +196,8 @@ class HostForm(Screen[str | None]):
             options = self.host.modules.get("ssh", {}).get("options", {}) if self.host else {}
             with Horizontal(classes="row tall"):
                 yield Label("ssh options")
-                yield TextArea("\n".join(f"{k} {v}" for k, v in options.items()), id="f-options")
+                lines = [f"{k} {v}" for k, value in options.items() for v in (value if isinstance(value, list) else [value])]
+                yield TextArea("\n".join(lines), id="f-options")
             yield Static(id="error-options", classes="error")
             with Horizontal(classes="row"):
                 yield Label("exclude")
@@ -237,9 +242,14 @@ class HostForm(Screen[str | None]):
         wanted = parse_options(self.query_one("#f-options", TextArea).text)
         keys = {k.casefold() for k, _ in wanted}
         c.options = [(k, "") for k in current if k.casefold() not in keys]
+        # A keyword on several lines holds them all, as a list; only one that changed is sent.
+        given: dict[str, list[str]] = {}
+        for key, val in wanted:
+            given.setdefault(key.casefold(), []).append(val)
         for key, val in wanted:
             mine = next((v for k, v in current.items() if k.casefold() == key.casefold()), None)
-            if val != mine:
+            values = given[key.casefold()]
+            if (values[0] if len(values) == 1 else values) != mine:
                 c.options.append((key, val))
 
         excluded = set(self.host.exclude) if self.host else set()

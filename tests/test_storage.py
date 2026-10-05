@@ -92,7 +92,7 @@ def test_version_1_upgrades_in_memory_and_converts_on_save(tmp_path):
     assert inventory.defaults.modules == {"ssh": {"options": {"Compression": "yes"}}}
     storage.save(inventory)
     saved = json.loads(path.read_text())
-    assert saved["version"] == 2
+    assert saved["version"] == 3
     assert "ssh_options" not in json.dumps(saved) and '"ansible": false' not in json.dumps(saved)
 
 
@@ -112,7 +112,7 @@ def test_data_for_a_module_that_isnt_installed_survives(tmp_path):
     [
         ("{not json", "not valid JSON"),
         ('{"version": 2, "hosts": [], "extra": 1}', "unknown keys"),
-        ('{"version": 3}', "schema version 3"),
+        ('{"version": 4}', "schema version 4"),
         ('{"version": 2, "hosts": [{"name": "a b", "hostname": "x"}]}', "not a valid ssh host name"),
         ('{"version": 2, "hosts": [{"name": "a", "hostname": "x", "port": 0}]}', "1-65535"),
         ('{"version": 2, "hosts": [{"name": "a", "hostname": "x"}, {"name": "A", "hostname": "y"}]}', "appears twice"),

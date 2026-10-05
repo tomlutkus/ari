@@ -215,7 +215,7 @@ def test_a_later_block_fills_what_the_first_left_unset(personal, tmp_path, capsy
     assert run("import", "ssh", source(tmp_path, text)) == 0
     assert "conflict" not in capsys.readouterr().err
     db = host(personal, "db")
-    assert (db["hostname"], db["user"], db["ssh_key"]) == ("192.0.2.10", "admin", "~/.ssh/k")
+    assert (db["hostname"], db["user"], db["keys"]) == ("192.0.2.10", "admin", ["k"])
     assert db["modules"]["ssh"]["options"]["ProxyJump"] == "j"
 
 

@@ -241,7 +241,9 @@ T}
 T{
 \f[B]--key\f[R] \f[I]PATH\f[R]
 T}@T{
-Private key, written as IdentityFile
+Private key file: the key declared at
+\f[I]PATH\f[R], declared when
+there\[aq]s none
 T}
 T{
 \f[B]--notes\f[R] \f[I]TEXT\f[R]
@@ -528,6 +530,15 @@ repeatable
 T}
 .TE
 .PP
+Each key file the source names becomes
+the inventory\[aq]s key at that path.
+A path the inventory has no key for is
+declared under the file\[aq]s stem,
+numbered when the name is taken, and the
+report lists the keys it declared.
+A key only refused or conflicting hosts
+would have used isn\[aq]t declared.
+.PP
 With the \f[B]ssh\f[R] module,
 \f[I]SOURCE\f[R] is a config file.
 The first token on a Host line becomes
@@ -549,11 +560,11 @@ A new host without \f[B]Port\f[R] gets
 22, ssh\[aq]s own default, stored only
 when the inventory\[aq]s default port
 differs.
-\f[B]HostName\f[R], \f[B]User\f[R],
-\f[B]Port\f[R] and
-\f[B]IdentityFile\f[R] become fields,
-and every other keyword is kept as an
-ssh option, in order.
+\f[B]HostName\f[R], \f[B]User\f[R] and
+\f[B]Port\f[R] become fields,
+\f[B]IdentityFile\f[R] the host\[aq]s
+key, and every other keyword is kept as
+an ssh option, in order.
 Export writes \f[B]IdentitiesOnly
 yes\f[R] after a key unless the host
 sets IdentitiesOnly itself, so a block
@@ -1040,9 +1051,13 @@ inventory \f[B]defaults\f[R].
 .nf
 \f[C]
 {
-  \[dq]version\[dq]: 2,
+  \[dq]version\[dq]: 3,
   \[dq]last_updated\[dq]: \[dq]2026-10-02T21:14:00+01:00\[dq],
-  \[dq]defaults\[dq]: {\[dq]user\[dq]: \[dq]deploy\[dq], \[dq]ssh_key\[dq]: \[dq]\[ti]/.ssh/lab-ed25519\[dq]},
+  \[dq]defaults\[dq]: {\[dq]user\[dq]: \[dq]deploy\[dq], \[dq]keys\[dq]: [\[dq]lab-ed25519\[dq]]},
+  \[dq]keys\[dq]: {
+    \[dq]lab-ed25519\[dq]: {\[dq]path\[dq]: \[dq]\[ti]/.ssh/lab-ed25519\[dq]},
+    \[dq]lab-rsa\[dq]: {\[dq]path\[dq]: \[dq]\[ti]/.ssh/lab-rsa\[dq]}
+  },
   \[dq]groups\[dq]: {
     \[dq]zone_app\[dq]: {\[dq]description\[dq]: \[dq]app subnet (192.0.2.0/25)\[dq]},
     \[dq]role_node\[dq]: {\[dq]children\[dq]: [\[dq]role_cluster\[dq], \[dq]role_standalone\[dq]]},
@@ -1056,6 +1071,7 @@ inventory \f[B]defaults\f[R].
       \[dq]notes\[dq]: \[dq]secrets store\[dq],
       \[dq]groups\[dq]: [\[dq]zone_app\[dq], \[dq]no_auto_update\[dq]],
       \[dq]reasons\[dq]: {\[dq]no_auto_update\[dq]: \[dq]secrets\[dq]},
+      \[dq]modules\[dq]: {\[dq]ssh\[dq]: {\[dq]options\[dq]: {\[dq]LocalForward\[dq]: [\[dq]8200 localhost:8200\[dq], \[dq]8201 localhost:8201\[dq]]}}},
       \[dq]last_updated\[dq]: \[dq]2026-10-02T21:14:00+01:00\[dq]
     }
   ]
@@ -1090,10 +1106,15 @@ T}@T{
 More names on the Host line
 T}
 T{
-\f[B]user\f[R], \f[B]port\f[R],
-\f[B]ssh_key\f[R]
+\f[B]user\f[R], \f[B]port\f[R]
 T}@T{
 Override the inventory defaults
+T}
+T{
+\f[B]keys\f[R]
+T}@T{
+Declared keys ssh offers, in order,
+instead of the default list
 T}
 T{
 \f[B]notes\f[R]
@@ -1129,7 +1150,8 @@ T{
 \f[V]modules.ssh.options\f[R]
 T}@T{
 Any other ssh_config keywords, written
-in order
+in order; a list for one used on every
+line
 T}
 .TE
 .PP
@@ -1148,12 +1170,49 @@ become comments under it;
 child groups; and \f[B]reasons\f[R], an
 ordered map of reason key to text.
 .PP
+Every key a host or the defaults list is
+declared under \f[B]keys\f[R], by a name
+with no spaces: letters, digits and
+\f[V]_ . + \[at] -\f[R], starting with a
+letter, digit or \f[V]_\f[R].
+A declaration holds the private
+key\[aq]s \f[B]path\f[R], and
+\f[B]pub\f[R], the public key, which
+\f[B]ari\f[R] keeps as written but
+doesn\[aq]t fill or check yet.
+A host that lists keys uses those
+instead of the defaults\[aq] list, not
+on top of them.
+.PP
+Options take a string.
+\f[B]LocalForward\f[R],
+\f[B]RemoteForward\f[R],
+\f[B]DynamicForward\f[R] and
+\f[B]SendEnv\f[R] can also take a list,
+since ssh uses every line of those; any
+other keyword uses only its first line,
+so a list there doesn\[aq]t load.
+A list of one is stored as its string.
+A host\[aq]s value for a keyword
+replaces the default\[aq]s, lists
+included.
+.PP
 Data for a module that isn\[aq]t
 installed is kept as it is, so removing
 a plugin never loses anything.
-A version 1 file, from ari 0.2, is
-upgraded when it\[aq]s read and saved as
-version 2 on its next write.
+Older files are upgraded when
+they\[aq]re read and saved as version 3
+on their next write.
+A version 1 file, from ari 0.2, moves
+its ssh options and Ansible opt-out
+under \f[B]modules\f[R].
+A version 2 file, up to ari 0.6, keeps
+one key path per host and in the
+defaults; each path becomes a declared
+key named after the file\[aq]s stem,
+numbered when two files share one, so
+every generated file stays byte for byte
+the same.
 .PP
 A file that fails to parse stops
 \f[B]ari\f[R] with the path and the
@@ -1170,7 +1229,8 @@ any check fails, listing every problem
 at once: the name and aliases are valid
 ssh host names and unique across all
 inventories, the hostname has no spaces,
-the port is 1-65535, every group is
+the port is 1-65535, every key is
+declared and listed once, every group is
 declared, every reason is one its group
 declares, and each installed module
 accepts the host\[aq]s data.
@@ -1191,11 +1251,12 @@ inventory doesn\[aq]t.
 .PP
 \f[B]export\f[R] checks every inventory
 it covers before writing anything.
-Beyond names, groups and reasons, every
-child group must be declared, children
-may not form a cycle, and no alias may
-be its host\[aq]s own name in another
-case.
+Beyond names, keys, groups and reasons,
+including the keys the defaults list,
+every child group must be declared,
+children may not form a cycle, and no
+alias may be its host\[aq]s own name in
+another case.
 The \f[B]ansible\f[R] module adds its
 own rules: every declared group is a
 valid Ansible group name and matches
@@ -1208,11 +1269,13 @@ exports is in exactly one zone.
 Hosts are sorted by name.
 Each block gets \f[B]HostName\f[R],
 \f[B]User\f[R] when one is set,
-\f[B]Port\f[R] when it isn\[aq]t 22, and
-\f[B]IdentityFile\f[R] with
-\f[B]IdentitiesOnly yes\f[R] when a key
-is set, followed by the host\[aq]s other
-options.
+\f[B]Port\f[R] when it isn\[aq]t 22, an
+\f[B]IdentityFile\f[R] for each of its
+keys in order, then \f[B]IdentitiesOnly
+yes\f[R] once when there is a key,
+followed by the host\[aq]s other
+options, one line for each value of a
+list.
 There are no \f[V]Host *\f[R] blocks:
 they ignore file boundaries, and
 \f[B]IdentityFile\f[R] accumulates
@@ -1253,6 +1316,8 @@ and \f[B]ansible_user\f[R],
 \f[B]ansible_port\f[R] or
 \f[B]ansible_ssh_private_key_file\f[R]
 only where it differs from the defaults.
+\f[B]ansible_ssh_private_key_file\f[R]
+takes one file, its first key\[aq]s.
 .PP
 Each file in the \f[B]groups\f[R] table
 holds the groups its globs match, in

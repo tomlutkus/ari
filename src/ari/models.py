@@ -2,6 +2,7 @@
 
 import copy
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -9,13 +10,16 @@ from typing import Any
 
 from .errors import HostsError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # One ssh Host token that names a single host: no whitespace, no pattern characters.
 _TOKEN = re.compile(r"[^\s*?!#,\"'=]+")
 
 # Module names, as registered in the ari.modules entry point group.
 MODULE_NAME = re.compile(r"[a-z][a-z0-9_]*")
+
+# Key names: no spaces, so a list of them can be typed on one line, and no / or ~ to read as a path.
+KEY_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+@-]*")
 
 
 def now() -> str:
@@ -32,6 +36,37 @@ def check_port(value: Any, where: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
         raise HostsError(f"{where}: port must be an integer 1-65535, got {value!r}")
     return value
+
+
+def check_key_name(value: str, where: str) -> str:
+    if not KEY_NAME.fullmatch(value):
+        raise HostsError(f"{where}: {value!r} can't be a key name: letters, digits and _ . + @ -, starting with a letter, digit or _")
+    return value
+
+
+def numbered(base: str, taken: Iterable[str]) -> str:
+    """base, or base-2, base-3 and so on, whichever isn't taken."""
+    taken = set(taken)
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}-{n}", n + 1
+    return name
+
+
+def key_name(path: str, taken: Iterable[str]) -> str:
+    """A name for the key at path: the file's stem, made usable as a name, numbered when taken."""
+    base = re.sub(r"[^A-Za-z0-9_.+@-]+", "-", Path(path).stem).lstrip(".+@-") or "key"
+    return numbered(base, taken)
+
+
+def declare_key(keys: dict[str, "KeyDef"], path: str) -> str:
+    """The name of the first key declared at path, declaring one when there's none."""
+    for name, key in keys.items():
+        if key.path == path:
+            return name
+    name = key_name(path, keys)
+    keys[name] = KeyDef(path)
+    return name
 
 
 class _Fields:
@@ -115,6 +150,34 @@ class _Fields:
             raise HostsError(f"{self.where}: unknown keys {sorted(unknown)}")
 
 
+def _line(value: str | None, what: str, where: str) -> str | None:
+    if value is not None and (not value or "\n" in value or "\r" in value):
+        raise HostsError(f"{where}: {what} must be one non-empty line")
+    return value
+
+
+@dataclass
+class KeyDef:
+    """A declared key: the private key file ssh offers, under a name hosts and defaults list.
+    pub, the public half, is kept as written; nothing fills or checks it yet."""
+
+    path: str
+    pub: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"path": self.path}
+        if self.pub is not None:
+            out["pub"] = self.pub
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> "KeyDef":
+        f = _Fields(data, where)
+        key = cls(_line(f.text("path", required=True), "path", where), _line(f.text("pub"), "pub", where))
+        f.done()
+        return key
+
+
 @dataclass
 class Host:
     name: str
@@ -122,7 +185,7 @@ class Host:
     aliases: list[str] = field(default_factory=list)
     user: str | None = None
     port: int | None = None
-    ssh_key: str | None = None
+    keys: list[str] = field(default_factory=list)
     notes: str = ""
     groups: list[str] = field(default_factory=list)
     reasons: dict[str, str] = field(default_factory=dict)
@@ -142,8 +205,8 @@ class Host:
             out["user"] = self.user
         if self.port is not None:
             out["port"] = self.port
-        if self.ssh_key is not None:
-            out["ssh_key"] = self.ssh_key
+        if self.keys:
+            out["keys"] = self.keys
         if self.notes:
             out["notes"] = self.notes
         if self.groups:
@@ -175,7 +238,7 @@ class Host:
             aliases=[check_token(a, "alias", where) for a in f.strings("aliases")],
             user=f.text("user"),
             port=port,
-            ssh_key=f.text("ssh_key"),
+            keys=f.strings("keys"),
             notes=f.text("notes") or "",
             groups=f.strings("groups"),
             reasons=f.mapping("reasons"),
@@ -191,7 +254,7 @@ class Host:
 class Defaults:
     user: str | None = None
     port: int | None = None
-    ssh_key: str | None = None
+    keys: list[str] = field(default_factory=list)
     modules: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def is_empty(self) -> bool:
@@ -203,8 +266,8 @@ class Defaults:
             out["user"] = self.user
         if self.port is not None:
             out["port"] = self.port
-        if self.ssh_key is not None:
-            out["ssh_key"] = self.ssh_key
+        if self.keys:
+            out["keys"] = self.keys
         modules = {name: data for name, data in self.modules.items() if data}
         if modules:
             out["modules"] = modules
@@ -216,7 +279,7 @@ class Defaults:
         port = f.integer("port")
         if port is not None:
             check_port(port, where)
-        defaults = cls(f.text("user"), port, f.text("ssh_key"), f.namespaces("modules"))
+        defaults = cls(f.text("user"), port, f.strings("keys"), f.namespaces("modules"))
         f.done()
         return defaults
 
@@ -253,6 +316,7 @@ class Inventory:
     groups: dict[str, GroupDef] = field(default_factory=dict)
     hosts: list[Host] = field(default_factory=list)
     last_updated: str = ""
+    keys: dict[str, KeyDef] = field(default_factory=dict)
 
     def find(self, token: str) -> Host | None:
         """A host by name or alias, compared the way ssh does: case-insensitively."""
@@ -271,14 +335,23 @@ class Inventory:
     def port(self, host: Host) -> int:
         return host.port or self.defaults.port or 22
 
-    def ssh_key(self, host: Host) -> str | None:
-        return host.ssh_key or self.defaults.ssh_key
+    def host_keys(self, host: Host) -> list[str]:
+        """The names of the keys ssh offers the host, in order: its own list, else the default one."""
+        return host.keys or self.defaults.keys
+
+    def key_paths(self, names: list[str]) -> list[str]:
+        """The files of the named keys, in order. A name nothing declares is left out; export refuses it."""
+        return [self.keys[name].path for name in names if name in self.keys]
+
+    def identity_files(self, host: Host) -> list[str]:
+        return self.key_paths(self.host_keys(host))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": SCHEMA_VERSION,
             "last_updated": self.last_updated,
             "defaults": self.defaults.to_dict(),
+            "keys": {name: key.to_dict() for name, key in self.keys.items()},
             "groups": {name: group.to_dict() for name, group in self.groups.items()},
             "hosts": [host.to_dict() for host in self.hosts],
         }
@@ -288,6 +361,8 @@ class Inventory:
         where = str(path)
         if isinstance(data, dict) and data.get("version") == 1:
             data = _upgrade_v1(data)
+        if isinstance(data, dict) and data.get("version") == 2:
+            data = _upgrade_v2(data, where)
         f = _Fields(data, where)
         version = f.integer("version", required=True)
         if version != SCHEMA_VERSION:
@@ -298,6 +373,11 @@ class Inventory:
         hosts_raw = f.raw("hosts") or []
         if not isinstance(hosts_raw, list):
             raise HostsError(f"{where}: 'hosts' must be a list")
+        keys_raw = f.raw("keys")
+        keys_raw = {} if keys_raw is None else keys_raw
+        if not isinstance(keys_raw, dict):
+            raise HostsError(f"{where}: 'keys' must be an object")
+        keys = {check_key_name(k, f"{where}: keys"): KeyDef.from_dict(v, f"{where}: keys.{k}") for k, v in keys_raw.items()}
         inventory = cls(
             name=name,
             path=path,
@@ -305,6 +385,7 @@ class Inventory:
             groups={g: GroupDef.from_dict(v, f"{where}: groups.{g}") for g, v in groups_raw.items()},
             hosts=[Host.from_dict(h, f"{where}: hosts[{i}]") for i, h in enumerate(hosts_raw)],
             last_updated=f.text("last_updated") or "",
+            keys=keys,
         )
         f.done()
         seen: set[str] = set()
@@ -331,4 +412,33 @@ def _upgrade_v1(data: dict[str, Any]) -> dict[str, Any]:
             host.setdefault("modules", {})["ssh"] = {"options": host.pop("ssh_options")}
         if host.pop("ansible", True) is False:
             host["exclude"] = ["ansible"]
+    return data
+
+
+def _upgrade_v2(data: dict[str, Any], where: str) -> dict[str, Any]:
+    """Version 2 kept a key's path on each host and in the defaults. Version 3 declares each key
+    once under keys, named after its file's stem and numbered on a clash, and hosts and defaults
+    list the names. Paths don't change, so neither does anything exported. The file converts on
+    its next save."""
+    data = copy.deepcopy(data)
+    if "keys" in data:
+        raise HostsError(f"{where}: unknown keys ['keys']")
+    data["version"] = 3
+    keys: dict[str, KeyDef] = {}
+
+    def convert(record: Any, label: str) -> None:
+        if not isinstance(record, dict) or "ssh_key" not in record:
+            return
+        path = record.pop("ssh_key")
+        if path is None or path == "":
+            return  # version 2 read both as no key of its own
+        if not isinstance(path, str):
+            raise HostsError(f"{label}: 'ssh_key' must be a string")
+        record["keys"] = [declare_key(keys, path)]
+
+    convert(data.get("defaults"), f"{where}: defaults")
+    hosts = data.get("hosts")
+    for i, host in enumerate(hosts if isinstance(hosts, list) else []):
+        convert(host, f"{where}: hosts[{i}]")
+    data["keys"] = {name: key.to_dict() for name, key in keys.items()}
     return data

@@ -10,7 +10,7 @@ import yaml
 from conftest import FIXTURES, write_config
 from ari.cli import main
 from ari.errors import HostsError
-from ari.models import Defaults, GroupDef, Host, Inventory
+from ari.models import Defaults, GroupDef, Host, Inventory, KeyDef
 from ari.modules import registry
 from ari.modules.ansible import AnsibleModule, Settings, render_groups, render_hosts, scalar, sections
 from ari.modules.ssh import SshModule
@@ -130,14 +130,22 @@ def test_header_pads_to_62_and_falls_back_to_the_group_name():
 
 
 def test_host_vars_only_where_they_differ():
-    defaults = Defaults(user="deploy", port=22, ssh_key="~/.ssh/k")
-    inventory = Inventory("t", FIXTURES / "t.json", defaults=defaults)
-    hosts = [Host("a", "192.0.2.1", user="deploy", port=22, ssh_key="~/.ssh/k"), Host("b", "192.0.2.2", user="admin", port=2222)]
+    defaults = Defaults(user="deploy", port=22, keys=["k"])
+    keys = {"k": KeyDef("~/.ssh/k"), "k-copy": KeyDef("~/.ssh/k"), "other": KeyDef("~/.ssh/other"), "spare": KeyDef("~/.ssh/s")}
+    inventory = Inventory("t", FIXTURES / "t.json", defaults=defaults, keys=keys)
+    hosts = [
+        Host("a", "192.0.2.1", user="deploy", port=22, keys=["k"]),
+        Host("b", "192.0.2.2", user="admin", port=2222),
+        Host("c", "192.0.2.3", keys=["k-copy", "spare"]),  # another name for the same first file
+        Host("d", "192.0.2.4", keys=["other", "k"]),
+    ]
     loaded = yaml.safe_load(render_hosts(inventory, sections(inventory, hosts, settings(zones=()))))
     assert loaded["all"]["vars"] == {"ansible_user": "deploy", "ansible_ssh_private_key_file": "~/.ssh/k", "ansible_port": 22}
     assert loaded["all"]["hosts"] == {
         "a": {"ansible_host": "192.0.2.1"},
         "b": {"ansible_host": "192.0.2.2", "ansible_user": "admin", "ansible_port": 2222},
+        "c": {"ansible_host": "192.0.2.3"},
+        "d": {"ansible_host": "192.0.2.4", "ansible_ssh_private_key_file": "~/.ssh/other"},
     }
 
 
@@ -206,7 +214,8 @@ def test_validation_routing_zones_and_names():
 
 def test_import_reads_hosts_defaults_groups_and_lists_comments():
     result = AnsibleModule().read(str(FIXTURES / "ansible"))
-    assert result.defaults == Defaults(user="deploy", port=22, ssh_key="~/.ssh/lab-ed25519")
+    assert result.defaults == Defaults(user="deploy", port=22, keys=["lab-ed25519"])
+    assert result.keys == {"lab-ed25519": KeyDef("~/.ssh/lab-ed25519")}
     by_name = {h.name: h for h in result.hosts}
     assert by_name["store1"].notes == "storage: backups"
     assert by_name["store1"].groups == ["zone_mgmt", "role_standalone", "do_not_touch", "monitoring_infra"]

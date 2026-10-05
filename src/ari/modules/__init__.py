@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ..errors import HostsError
-from ..models import MODULE_NAME, Defaults, GroupDef, Host, Inventory
+from ..models import MODULE_NAME, Defaults, GroupDef, Host, Inventory, KeyDef
 
 GROUP = "ari.modules"
 RESERVED = {"file"}  # keys an inventory table already uses
@@ -44,6 +44,9 @@ class ImportResult:
     # Something in the source that changes behaviour couldn't be represented. An export over
     # these files would drop it, so the import doesn't adopt them for the guard.
     lossy: bool = False
+    # The keys the hosts and defaults name, as the source declares them. Import maps each onto
+    # the inventory's key at the same path, or declares it there.
+    keys: dict[str, KeyDef] = field(default_factory=dict)
 
 
 class Module:

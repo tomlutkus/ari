@@ -268,6 +268,9 @@ def cmd_import(cfg: Config, args: argparse.Namespace) -> int:
             out.print(f"{report.inventory}: {len(names)} {label}{listed}", soft_wrap=True)
     if report.groups_added:
         out.print(f"{report.inventory}: {_plural(len(report.groups_added), 'group')} declared", soft_wrap=True)
+    if report.keys_added:
+        declared = f"{_plural(len(report.keys_added), 'key')} declared ({', '.join(report.keys_added)})"
+        out.print(f"{report.inventory}: {declared}", soft_wrap=True)
     if not (report.added or report.merged or report.unchanged):
         out.print(f"{report.inventory}: nothing imported from {report.source}")
     for path in report.unadopted:

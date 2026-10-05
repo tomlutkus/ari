@@ -12,7 +12,20 @@ from . import storage
 from .config import STARTER, Config
 from .errors import HostsError
 from .guard import Guard, Status
-from .models import MODULE_NAME, GroupDef, Host, Inventory, check_port, check_token, now
+from .models import (
+    KEY_NAME,
+    MODULE_NAME,
+    GroupDef,
+    Host,
+    Inventory,
+    KeyDef,
+    check_port,
+    check_token,
+    declare_key,
+    key_name,
+    now,
+    numbered,
+)
 from .modules import Module, registry
 from .paths import config_file, tilde
 
@@ -43,7 +56,7 @@ def _haystack(inventory: Inventory, host: Host) -> list[str]:
         *host.aliases,
         inventory.user(host) or "",
         str(inventory.port(host)),
-        inventory.ssh_key(host) or "",
+        *inventory.identity_files(host),
         host.notes,
         *host.groups,
         *host.reasons.values(),
@@ -133,7 +146,7 @@ def host_details(inventory: Inventory, host: Host) -> list[Detail]:
         Detail("hostname", host.hostname),
         inherited("user", host.user, user) if user else Detail("user", getpass.getuser(), "(whoever connects)"),
         inherited("port", host.port, inventory.port(host)),
-        inherited("ssh key", host.ssh_key, inventory.ssh_key(host)),
+        inherited("ssh key", host.keys or None, " ".join(inventory.identity_files(host)) or None),
         Detail("notes", host.notes or "-"),
         Detail("groups", ", ".join(groups) or "-"),
         Detail("exclude", ", ".join(host.exclude) or "-"),
@@ -219,6 +232,24 @@ def _membership_problems(inventory: Inventory, host: Host) -> list[str]:
 
 def group_problems(inventory: Inventory) -> list[str]:
     return [p for host in inventory.hosts for p in _membership_problems(inventory, host)] + _structure_problems(inventory)
+
+
+def _key_problems(inventory: Inventory, names: list[str], where: str) -> list[str]:
+    """Every key a host or the defaults list is declared, and listed once."""
+    problems = []
+    for name in sorted({n for n in names if names.count(n) > 1}, key=names.index):
+        problems.append(f"{where}: key {name!r} is listed twice")
+    for name in dict.fromkeys(names):
+        if name not in inventory.keys:
+            problems.append(f"{where}: key {name!r} isn't declared")
+    return problems
+
+
+def key_problems(inventory: Inventory) -> list[str]:
+    problems = _key_problems(inventory, inventory.defaults.keys, f"{inventory.name}: defaults")
+    for host in inventory.hosts:
+        problems += _key_problems(inventory, host.keys, f"{inventory.name} ({host.name})")
+    return problems
 
 
 def _structure_problems(inventory: Inventory) -> list[str]:
@@ -412,19 +443,24 @@ class ImportReport:
     defaults_set: dict[str, str] = field(default_factory=dict)
     defaults_from: str = "the most common values"
     groups_added: list[str] = field(default_factory=list)
+    keys_added: list[str] = field(default_factory=list)  # keys declared for paths the inventory had none for
     settings: dict | None = None  # a config table the source suggests, for the module that read it
 
 
 def _infer_defaults(inventory: Inventory, hosts: list[Host]) -> dict[str, str]:
-    """For a brand new inventory: the user and key most hosts share become defaults."""
+    """For a brand new inventory: the user and keys most hosts share become defaults."""
     chosen = {}
-    for attr in ("user", "ssh_key"):
-        counts = Counter(getattr(h, attr) for h in hosts if getattr(h, attr))
-        if counts:
-            value, count = counts.most_common(1)[0]
-            if count >= 2:
-                setattr(inventory.defaults, attr, value)
-                chosen[attr] = value
+    users = Counter(h.user for h in hosts if h.user)
+    if users:
+        user, count = users.most_common(1)[0]
+        if count >= 2:
+            inventory.defaults.user = chosen["user"] = user
+    keys = Counter(tuple(h.keys) for h in hosts if h.keys)
+    if keys:
+        names, count = keys.most_common(1)[0]
+        if count >= 2:
+            inventory.defaults.keys = list(names)
+            chosen["ssh_key"] = " ".join(inventory.key_paths(inventory.defaults.keys))
     return chosen
 
 
@@ -440,8 +476,8 @@ def _strip_defaults(inventory: Inventory, host: Host) -> None:
         host.user = None
     if host.port == (d.port or 22):
         host.port = None
-    if host.ssh_key is not None and host.ssh_key == d.ssh_key:
-        host.ssh_key = None
+    if host.keys and host.keys == d.keys:
+        host.keys = []
     for name, data in host.modules.items():
         _module(name).strip_defaults(d.modules.get(name, {}), data)
     host.modules = {name: data for name, data in host.modules.items() if data}
@@ -458,9 +494,9 @@ def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | N
         return f"User {incoming.user} differs from {user}"
     if incoming.port and incoming.port != inventory.port(existing):
         return f"Port {incoming.port} differs from {inventory.port(existing)}"
-    key = inventory.ssh_key(existing)
-    if incoming.ssh_key and key and incoming.ssh_key != key:
-        return f"IdentityFile {incoming.ssh_key} differs from {key}"
+    stated, keys = inventory.key_paths(incoming.keys), inventory.identity_files(existing)
+    if stated and keys and stated != keys:
+        return f"IdentityFile {' '.join(stated)} differs from {' '.join(keys)}"
     if incoming.notes and existing.notes and incoming.notes != existing.notes:
         return f"notes {incoming.notes!r} differ from {existing.notes!r}"
     for name, data in incoming.modules.items():
@@ -488,14 +524,33 @@ def _merge(inventory: Inventory, existing: Host, incoming: Host) -> bool:
     if incoming.user and not inventory.user(existing):
         existing.user = incoming.user
         changed = True
-    if incoming.ssh_key and not inventory.ssh_key(existing):
-        existing.ssh_key = incoming.ssh_key
+    if incoming.keys and not inventory.host_keys(existing):
+        existing.keys = list(incoming.keys)
         changed = True
     for name, data in incoming.modules.items():
         target = existing.modules.setdefault(name, {})
         changed |= _module(name).merge(target, data)
     existing.modules = {name: data for name, data in existing.modules.items() if data}
     return changed
+
+
+def _adopt_keys(target: Inventory, keys: dict[str, KeyDef], hosts: list[Host], defaults: list[str]) -> list[str]:
+    """Put the source's keys in the inventory's terms. A path the inventory declares keeps the
+    inventory's name; a new one is declared under the source's name, numbered when that's taken.
+    Hosts and the source's defaults are renamed in place. Returns the keys declared."""
+    rename: dict[str, str] = {}
+    added = []
+    for name, key in keys.items():
+        mine = next((n for n, k in target.keys.items() if k.path == key.path), None)
+        if mine is None:
+            mine = numbered(name, target.keys) if KEY_NAME.fullmatch(name) else key_name(key.path, target.keys)
+            target.keys[mine] = copy.deepcopy(key)
+            added.append(mine)
+        rename[name] = mine
+    for host in hosts:
+        host.keys = [rename.get(n, n) for n in host.keys]
+    defaults[:] = [rename.get(n, n) for n in defaults]
+    return added
 
 
 def import_hosts(
@@ -514,6 +569,7 @@ def import_hosts(
     target = inventories[cfg.get(inventory_name).name]
     label = tilde(result.files[0][0]) if result.files else (source or module_name)
     report = ImportReport(target.name, label, warnings=list(result.warnings))
+    added_keys = _adopt_keys(target, result.keys, result.hosts, result.defaults.keys if result.defaults else [])
 
     # A host that would make the inventory unreadable never gets near it, nor near the defaults.
     readable = []
@@ -534,22 +590,27 @@ def import_hosts(
         # The source states its own defaults; hosts that leave a field unset inherit them there too.
         d = result.defaults
         if fresh:
-            target.defaults.user, target.defaults.port, target.defaults.ssh_key = d.user, d.port, d.ssh_key
-            report.defaults_set = {k: str(v) for k, v in (("user", d.user), ("port", d.port), ("ssh_key", d.ssh_key)) if v is not None}
+            target.defaults.user, target.defaults.port, target.defaults.keys = d.user, d.port, list(d.keys)
+            key = " ".join(target.key_paths(d.keys)) or None
+            report.defaults_set = {k: str(v) for k, v in (("user", d.user), ("port", d.port), ("ssh_key", key)) if v is not None}
             report.defaults_from = "the source"
         else:
             # The inventory keeps its own, so each host gets what the source gave it: a host that
             # leaves a field unset takes the source's default. Stored where it differs from the
             # inventory's; on a host already here, a value that would change is a conflict.
             mine = target.defaults
-            ours = {"user": mine.user, "port": mine.port or 22, "ssh_key": mine.ssh_key}
-            theirs = {"user": d.user, "port": d.port, "ssh_key": d.ssh_key}
-            differ = (d.user, d.port, d.ssh_key) != (mine.user, mine.port, mine.ssh_key)
+            ours = {"user": mine.user, "port": mine.port or 22, "keys": target.key_paths(mine.keys)}
+            theirs = {"user": d.user, "port": d.port, "keys": target.key_paths(d.keys)}
+            differ = (d.user, d.port, theirs["keys"]) != (mine.user, mine.port, ours["keys"])
             for host in result.hosts:
-                for attr, value in theirs.items():
-                    if value is not None and getattr(host, attr) is None:
+                for attr, value, unset in (
+                    ("user", d.user, host.user is None),
+                    ("port", d.port, host.port is None),
+                    ("keys", list(d.keys) or None, not host.keys),
+                ):
+                    if value is not None and unset:
                         setattr(host, attr, value)
-                        if value != ours[attr]:
+                        if theirs[attr] != ours[attr]:
                             leaning.add(host.name)
     elif fresh:
         report.defaults_set = _infer_defaults(target, result.hosts)
@@ -600,7 +661,7 @@ def import_hosts(
         existing = target.find(host.name)
         if existing is None:
             inherits_user = result.defaults is None and host.user is None and target.defaults.user
-            inherits_key = result.defaults is None and host.ssh_key is None and target.defaults.ssh_key
+            inherits_key = result.defaults is None and not host.keys and target.defaults.keys
             module.complete(host)
             _strip_defaults(target, host)
             host.exclude = list(exclude)
@@ -643,6 +704,13 @@ def import_hosts(
             + (f", and pinned the source's on {', '.join(pinned)}" if pinned else "")
         )
 
+    # A key declared for this import stays only when something saved uses it.
+    used = set(target.defaults.keys) | {k for h in target.hosts for k in h.keys}
+    for name in added_keys:
+        if name in used:
+            report.keys_added.append(name)
+        else:
+            del target.keys[name]
     if report.added or report.merged or report.defaults_set or report.groups_added or groups_changed:
         storage.save(target)
     # The guard records a source only when the inventory now holds all of it, so an export over
@@ -705,8 +773,9 @@ class HostRefused(HostsError):
         self.problems = problems
 
 
-def _apply(host: Host, c: Changes) -> list[Problem]:
-    """Apply changes in place. Returns what couldn't be applied; the record checks come after."""
+def _apply(inventory: Inventory, host: Host, c: Changes) -> list[Problem]:
+    """Apply changes in place. Returns what couldn't be applied; the record checks come after.
+    A key is given as its file, which names the key declared there, or declares one."""
     problems = []
     if c.rename is not None:
         host.name = c.rename
@@ -715,7 +784,12 @@ def _apply(host: Host, c: Changes) -> list[Problem]:
     if c.user is not None:
         host.user = c.user or None
     if c.ssh_key is not None:
-        host.ssh_key = c.ssh_key or None
+        if not c.ssh_key:
+            host.keys = []
+        elif "\n" in c.ssh_key or "\r" in c.ssh_key:
+            problems.append(Problem("ssh_key", "key must be one line"))
+        else:
+            host.keys = [declare_key(inventory.keys, c.ssh_key)]
     if c.notes is not None:
         host.notes = c.notes
     if c.port is not None:
@@ -800,9 +874,8 @@ def _shape_problems(inventory: Inventory, host: Host) -> list[Problem]:
             except HostsError as e:
                 # ssh options are the one module field add and edit set directly.
                 problems.append(Problem("options" if name == "ssh" else None, str(e)))
-    for field_name, label, value in (("user", "user", host.user), ("ssh_key", "key", host.ssh_key)):
-        if value and ("\n" in value or "\r" in value):
-            problems.append(Problem(field_name, f"{where}: {label} must be one line"))
+    if host.user and ("\n" in host.user or "\r" in host.user):
+        problems.append(Problem("user", f"{where}: user must be one line"))
     return problems
 
 
@@ -832,12 +905,13 @@ def _host_problems(
     for token in host.tokens():
         if token.casefold() in owner:
             problems.append(Problem(field_of(token), f"{where}: {token!r} is already used by {owner[token.casefold()]}"))
+    problems += [Problem("ssh_key", p) for p in _key_problems(inventory, host.keys, where)]
     return problems + [Problem("groups", p) for p in _membership_problems(inventory, host)]
 
 
 def _write(inventories: dict[str, Inventory], inventory: Inventory, original: Host | None, host: Host, c: Changes) -> bool:
     """Apply, check, save. A host that fails any check is refused and nothing is saved."""
-    problems = [Problem(p.field, f"{inventory.name} ({host.name}): {p.message}") for p in _apply(host, c)]
+    problems = [Problem(p.field, f"{inventory.name} ({host.name}): {p.message}") for p in _apply(inventory, host, c)]
     _strip_defaults(inventory, host)
     problems += _host_problems(inventories, inventory, host, original)
     if problems:
@@ -945,7 +1019,7 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
     targets = []
     for ic in cfg.scope(scope):
         inventory = inventories[ic.name]
-        problems += group_problems(inventory)
+        problems += group_problems(inventory) + key_problems(inventory)
         for mc in ic.enabled():
             module = mc.module
             if not module.exports or (only and module.name not in only):

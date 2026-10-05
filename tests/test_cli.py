@@ -83,7 +83,8 @@ def test_import_infers_defaults_and_stores_only_differences(personal, capsys):
     assert run("import", "ssh", str(FIXTURES / "personal.conf")) == 0
     assert "4 added" in capsys.readouterr().out
     data = personal_json(personal)
-    assert data["defaults"] == {"user": "tom", "ssh_key": "~/.ssh/personal-ed25519"}
+    assert data["defaults"] == {"user": "tom", "keys": ["personal-ed25519"]}
+    assert data["keys"] == {"personal-ed25519": {"path": "~/.ssh/personal-ed25519"}}
     by_name = {h["name"]: h for h in data["hosts"]}
     assert set(by_name["laptop"]) == {"name", "hostname", "aliases", "last_updated"}
     assert by_name["nas"]["user"] == "root"

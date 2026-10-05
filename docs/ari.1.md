@@ -93,7 +93,7 @@ Add a host to one inventory: **-i**, then **ARI_INVENTORY**, then **default** fr
 |-------|-------------|
 | **--user** *USER* | Login name |
 | **--port** *PORT* | ssh port, 1-65535 |
-| **--key** *PATH* | Private key, written as IdentityFile |
+| **--key** *PATH* | Private key file: the key declared at *PATH*, declared when there's none |
 | **--notes** *TEXT* | Free text: a comment above the Host block, and the Ansible description |
 | **--alias** *ALIAS* | Another name on the Host line; repeatable |
 | **--opt** *KEY*=*VALUE* | Another ssh option; repeatable |
@@ -152,7 +152,9 @@ A clean import adopts the files it read: their hashes go to the guard, so export
 |-------|-------------|
 | **--exclude** *MODULE* | Keep the imported hosts out of *MODULE*'s output; repeatable |
 
-With the **ssh** module, *SOURCE* is a config file. The first token on a Host line becomes the name and the rest become aliases. A block without **HostName** is read the way ssh reads it, which connects to whichever token was typed: each token becomes a host of its own, connecting to its own name, with the block's user, port, key and options. A block for a host the inventory already has, a later block in the same file or the same host on re-import, compares and fills only what it sets, so without **HostName** or **Port** it can still add a user, key, alias or option. A new host without **Port** gets 22, ssh's own default, stored only when the inventory's default port differs. **HostName**, **User**, **Port** and **IdentityFile** become fields, and every other keyword is kept as an ssh option, in order. Export writes **IdentitiesOnly yes** after a key unless the host sets IdentitiesOnly itself, so a block with a key and no IdentitiesOnly is stored with **IdentitiesOnly no**, which is what ssh did with it. Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, ssh uses the first value and so does ari, except for **IdentityFile**, **CertificateFile**, **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv**: ssh uses every one of those, ari keeps the first and warns. A block without **User** stays without one, so ssh uses whoever connects. Point **ssh.path** only at a file ari owns: an Include, Match or `Host *` in it would be gone after the next export.
+Each key file the source names becomes the inventory's key at that path. A path the inventory has no key for is declared under the file's stem, numbered when the name is taken, and the report lists the keys it declared. A key only refused or conflicting hosts would have used isn't declared.
+
+With the **ssh** module, *SOURCE* is a config file. The first token on a Host line becomes the name and the rest become aliases. A block without **HostName** is read the way ssh reads it, which connects to whichever token was typed: each token becomes a host of its own, connecting to its own name, with the block's user, port, key and options. A block for a host the inventory already has, a later block in the same file or the same host on re-import, compares and fills only what it sets, so without **HostName** or **Port** it can still add a user, key, alias or option. A new host without **Port** gets 22, ssh's own default, stored only when the inventory's default port differs. **HostName**, **User** and **Port** become fields, **IdentityFile** the host's key, and every other keyword is kept as an ssh option, in order. Export writes **IdentitiesOnly yes** after a key unless the host sets IdentitiesOnly itself, so a block with a key and no IdentitiesOnly is stored with **IdentitiesOnly no**, which is what ssh did with it. Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, ssh uses the first value and so does ari, except for **IdentityFile**, **CertificateFile**, **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv**: ssh uses every one of those, ari keeps the first and warns. A block without **User** stays without one, so ssh uses whoever connects. Point **ssh.path** only at a file ari owns: an Include, Match or `Host *` in it would be gone after the next export.
 
 With the **ansible** module, *SOURCE* is an inventory directory, and every **.yml** and **.yaml** file at its top level is read. **all.vars** become the defaults, each host's **ansible_host**, **ansible_user**, **ansible_port**, **ansible_ssh_private_key_file** and **description** become its fields, and group membership, child groups and the file each group came from carry over. **ansible_host** and **description** must be strings: YAML reads `ansible_host: no` as false, so a host like that is skipped and a description like that left out, each reported. A quoted **ansible_port** such as `"2222"` is the number, as Ansible reads it. Anything else is reported as not imported: other vars, group vars, and members that no hosts section defines. Comments are read by nothing and listed with their file and line, so zone headers and reasons can be put back with **ari group**. When the inventory has no **ansible** table yet, import prints one to paste into config.toml, with each file's groups listed by name. Export writes the hosts file with hosts only, so groups defined there get a file of their own in that table, named in a warning. The groups the source brings get the check **group** runs: if they would add a cycle or an undeclared child, the problem is refused and the inventory's groups stay as they were, and a host in a group that didn't get declared is refused with it.
 
@@ -257,9 +259,13 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "last_updated": "2026-10-02T21:14:00+01:00",
-  "defaults": {"user": "deploy", "ssh_key": "~/.ssh/lab-ed25519"},
+  "defaults": {"user": "deploy", "keys": ["lab-ed25519"]},
+  "keys": {
+    "lab-ed25519": {"path": "~/.ssh/lab-ed25519"},
+    "lab-rsa": {"path": "~/.ssh/lab-rsa"}
+  },
   "groups": {
     "zone_app": {"description": "app subnet (192.0.2.0/25)"},
     "role_node": {"children": ["role_cluster", "role_standalone"]},
@@ -273,6 +279,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
       "notes": "secrets store",
       "groups": ["zone_app", "no_auto_update"],
       "reasons": {"no_auto_update": "secrets"},
+      "modules": {"ssh": {"options": {"LocalForward": ["8200 localhost:8200", "8201 localhost:8201"]}}},
       "last_updated": "2026-10-02T21:14:00+01:00"
     }
   ]
@@ -284,37 +291,42 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 | **name** | ssh alias and Ansible inventory hostname; required |
 | **hostname** | Address ssh and Ansible connect to; required |
 | **aliases** | More names on the Host line |
-| **user**, **port**, **ssh_key** | Override the inventory defaults |
+| **user**, **port** | Override the inventory defaults |
+| **keys** | Declared keys ssh offers, in order, instead of the default list |
 | **notes** | A comment above the Host block, and the Ansible description |
 | **groups** | Groups the host is in, each declared under **groups** |
 | **reasons** | Why the host is in a group: a reason key that group declares |
 | **exclude** | Modules whose output leaves this host out |
 | **modules** | Each module's own data, under its name |
-| `modules.ssh.options` | Any other ssh_config keywords, written in order |
+| `modules.ssh.options` | Any other ssh_config keywords, written in order; a list for one used on every line |
 
 Every group a host uses is declared under **groups**, even as an empty `{}`, so a typo fails instead of creating a group. **ari group** declares and changes them. A declaration takes three optional keys: **description**, whose first line is a zone's section header in the hosts file and whose further lines become comments under it; **children**, the group's child groups; and **reasons**, an ordered map of reason key to text.
 
-Data for a module that isn't installed is kept as it is, so removing a plugin never loses anything. A version 1 file, from ari 0.2, is upgraded when it's read and saved as version 2 on its next write.
+Every key a host or the defaults list is declared under **keys**, by a name with no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`. A declaration holds the private key's **path**, and **pub**, the public key, which **ari** keeps as written but doesn't fill or check yet. A host that lists keys uses those instead of the defaults' list, not on top of them.
+
+Options take a string. **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv** can also take a list, since ssh uses every line of those; any other keyword uses only its first line, so a list there doesn't load. A list of one is stored as its string. A host's value for a keyword replaces the default's, lists included.
+
+Data for a module that isn't installed is kept as it is, so removing a plugin never loses anything. Older files are upgraded when they're read and saved as version 3 on their next write. A version 1 file, from ari 0.2, moves its ssh options and Ansible opt-out under **modules**. A version 2 file, up to ari 0.6, keeps one key path per host and in the defaults; each path becomes a declared key named after the file's stem, numbered when two files share one, so every generated file stays byte for byte the same.
 
 A file that fails to parse stops **ari** with the path and the error. It is never treated as empty. Two ssh options that differ only in case are one keyword to ssh, so a file that holds both doesn't load.
 
 # VALIDATION
 
-**add** and **edit** check the host they write and save nothing if any check fails, listing every problem at once: the name and aliases are valid ssh host names and unique across all inventories, the hostname has no spaces, the port is 1-65535, every group is declared, every reason is one its group declares, and each installed module accepts the host's data. ssh options can't repeat a keyword the host has a field for, like **User** or **Port**. The TUI's form and group picker save through these same checks.
+**add** and **edit** check the host they write and save nothing if any check fails, listing every problem at once: the name and aliases are valid ssh host names and unique across all inventories, the hostname has no spaces, the port is 1-65535, every key is declared and listed once, every group is declared, every reason is one its group declares, and each installed module accepts the host's data. ssh options can't repeat a keyword the host has a field for, like **User** or **Port**. The TUI's form and group picker save through these same checks.
 
 **group** checks the group it writes the same way: a new name is usable, every child is declared, children form no cycle, and nothing a host relies on is removed. Only problems the write would add stop it; one already elsewhere in the inventory doesn't.
 
-**export** checks every inventory it covers before writing anything. Beyond names, groups and reasons, every child group must be declared, children may not form a cycle, and no alias may be its host's own name in another case. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table, and, when **zones** is set, every host it exports is in exactly one zone.
+**export** checks every inventory it covers before writing anything. Beyond names, keys, groups and reasons, including the keys the defaults list, every child group must be declared, children may not form a cycle, and no alias may be its host's own name in another case. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table, and, when **zones** is set, every host it exports is in exactly one zone.
 
 # GENERATED SSH CONFIG
 
-Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, and **IdentityFile** with **IdentitiesOnly yes** when a key is set, followed by the host's other options. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
+Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, an **IdentityFile** for each of its keys in order, then **IdentitiesOnly yes** once when there is a key, followed by the host's other options, one line for each value of a list. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
 
 Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file. The file gets mode 0600, as do the inventories, and a directory **ari** creates for them gets 0700.
 
 # GENERATED ANSIBLE INVENTORY
 
-The hosts file gets **all.vars** from the defaults, in the order **ansible_user**, **ansible_ssh_private_key_file**, **ansible_port**. With **zones** set, hosts come in sections, one per zone in the order the zones are declared, each opened by a blank line and a header comment padded to 62 characters. A zone without a description uses its group name. Within a section hosts sort by IP address, with names that aren't addresses after them. Each host gets **ansible_host**, **description** from its notes, and **ansible_user**, **ansible_port** or **ansible_ssh_private_key_file** only where it differs from the defaults.
+The hosts file gets **all.vars** from the defaults, in the order **ansible_user**, **ansible_ssh_private_key_file**, **ansible_port**. With **zones** set, hosts come in sections, one per zone in the order the zones are declared, each opened by a blank line and a header comment padded to 62 characters. A zone without a description uses its group name. Within a section hosts sort by IP address, with names that aren't addresses after them. Each host gets **ansible_host**, **description** from its notes, and **ansible_user**, **ansible_port** or **ansible_ssh_private_key_file** only where it differs from the defaults. **ansible_ssh_private_key_file** takes one file, its first key's.
 
 Each file in the **groups** table holds the groups its globs match, in declaration order, under `all: children:`, one blank line before each group. A group lists its children first, then its hosts in the hosts file's order. Hosts without a reason come first; then each reason, in the order its group declares them, writes its text as a comment followed by its hosts.
 

@@ -856,3 +856,26 @@ def test_no_arguments_without_a_terminal_prints_help(hosts, monkeypatch, capsys)
     monkeypatch.setattr(tui, "run", lambda cfg, scope: pytest.fail("the TUI opened"))
     assert main([]) == 0
     assert "usage: ari" in capsys.readouterr().out
+
+
+def test_the_form_shows_a_key_file_and_each_line_of_a_listed_option(hosts):
+    data = json.loads(work_json(hosts).read_text())
+    for host in data["hosts"]:
+        if host["name"] == "web-01":
+            host["ssh_key"] = "~/.ssh/web"
+            host["modules"] = {"ssh": {"options": {"LocalForward": ["5432 localhost:5432", "8080 localhost:80"]}}}
+    work_json(hosts).write_text(json.dumps(data))
+
+    async def script(pilot):
+        form = await edit(pilot, "web-01")
+        assert form.query_one("#f-ssh_key", Input).value == "~/.ssh/web"
+        assert form.query_one("#f-options", TextArea).text == "LocalForward 5432 localhost:5432\nLocalForward 8080 localhost:80"
+        fill(form, notes="db tunnel")
+        await pilot.press("ctrl+s")
+        assert app.screen is app.hosts
+
+    app = browser()
+    drive(app, script)
+    web = stored(hosts)["web-01"]
+    assert web["notes"] == "db tunnel" and web["keys"] == ["web"]
+    assert web["modules"]["ssh"]["options"] == {"LocalForward": ["5432 localhost:5432", "8080 localhost:80"]}
