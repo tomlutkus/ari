@@ -234,10 +234,10 @@ def _key_table(rows: list[core.KeyRow]) -> Table:
 
 
 def cmd_key(cfg: Config, args: argparse.Namespace) -> int:
-    changes = core.KeyChanges(path=args.path, remove=args.rm)
+    changes = core.KeyChanges(path=args.path, new=args.new, pub=args.pub, remove=args.rm)
     if args.name is None:
         if changes != core.KeyChanges():
-            raise HostsError("--path and --rm need a key NAME")
+            raise HostsError("--path, --new, --pub and --rm need a key NAME")
         rows = core.list_keys(cfg, _inventory_arg(args))
         if not rows:
             out.print("no keys")
@@ -246,6 +246,8 @@ def cmd_key(cfg: Config, args: argparse.Namespace) -> int:
         _print_whole(_key_table(rows))
         out.print(Text(_plural(len(rows), "key"), style="dim"))
         return 0
+    if args.new and not _keyboard():
+        raise HostsError("--new runs ssh-keygen, which asks for the passphrase on a terminal")
     inventory, status = core.write_key(cfg, cfg.select(_inventory_arg(args)).name, args.name, changes)
     done = {
         "declared": f"declared {args.name} in {inventory.name}",
@@ -462,9 +464,11 @@ def build_parser() -> argparse.ArgumentParser:
     grp.add_argument("--rm", action="store_true", help="remove the group")
     grp.set_defaults(func=cmd_group)
 
-    key = sub.add_parser("key", parents=[common], help="list keys, or declare, move or remove one")
+    key = sub.add_parser("key", parents=[common], help="list keys, or declare, move, generate or remove one")
     key.add_argument("name", metavar="NAME", nargs="?", help="key to declare or change; without it, list keys")
     key.add_argument("--path", metavar="PATH", help="the private key file, written as IdentityFile")
+    key.add_argument("--new", action="store_true", help="generate an ed25519 key at its path with ssh-keygen, and fill pub")
+    key.add_argument("--pub", action="store_true", help="fill pub from the key file")
     key.add_argument("--rm", action="store_true", help="remove the key")
     key.set_defaults(func=cmd_key)
 
@@ -485,6 +489,11 @@ def build_parser() -> argparse.ArgumentParser:
     exp.set_defaults(func=cmd_export)
 
     return parser
+
+
+def _keyboard() -> bool:
+    """Whether someone can type at ari: ssh-keygen reads a new key's passphrase from there."""
+    return sys.stdin.isatty()
 
 
 def _terminal() -> bool:

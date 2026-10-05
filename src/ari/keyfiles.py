@@ -1,5 +1,6 @@
-"""What ssh would find at a declared key's path, as ari key's STATE. These are checks for ari key
-only: export never runs them, so it works on a machine that doesn't hold every key."""
+"""Key files: what ssh would find at a declared key's path, as ari key's STATE, the public half
+pub stores, and the ssh-keygen run behind --new. Only ari key reads or writes them: export never
+does, so it works on a machine that doesn't hold every key."""
 
 import base64
 import binascii
@@ -8,6 +9,7 @@ import os
 import pwd
 import re
 import shutil
+import socket
 import stat
 import subprocess
 from datetime import datetime
@@ -80,17 +82,23 @@ def private_public(text: str) -> tuple[bytes | None, bool]:
     return blob, False
 
 
-def public_blob(text: str) -> bytes | None:
-    """The key in a public key line or file: the first line whose second field decodes."""
+def _public_line(text: str) -> tuple[bytes, str] | None:
+    """The first key in a public key file and its line: the first whose second field decodes."""
     for line in text.splitlines():
         fields = line.split()
         if len(fields) < 2 or fields[0].startswith("#"):
             continue
         try:
-            return base64.b64decode(fields[1], validate=True)
+            return base64.b64decode(fields[1], validate=True), line.strip()
         except binascii.Error:
             continue
     return None
+
+
+def public_blob(text: str) -> bytes | None:
+    """The key in a public key line or file."""
+    found = _public_line(text)
+    return found[0] if found else None
 
 
 def fingerprint(blob: bytes) -> str:
@@ -144,24 +152,93 @@ def _cert(path: str, blob: bytes | None, now: datetime) -> str:
     return "cert forever"
 
 
+def _private(path: str) -> tuple[str, str, os.stat_result] | str:
+    """The file ssh would read as the private key, its text and stat, or the word for why not."""
+    target, why = resolve(path)
+    if target is None:
+        return why
+    try:
+        st = os.stat(target)
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except OSError:
+        return "unreadable"
+    if not stat.S_ISREG(st.st_mode):
+        return "not a file"
+    text = _read(target)
+    if text is None:
+        return "unreadable"
+    return target, text, st
+
+
+def _blob_type(blob: bytes) -> str:
+    kind, _ = _string(blob, 0)
+    return kind.decode("ascii", "replace")
+
+
+def pub_file_line(target: str, blob: bytes) -> str | None:
+    """The line of target's .pub, comment and all, when it holds the key blob."""
+    beside = _read(target + ".pub")
+    found = _public_line(beside) if beside is not None else None
+    return found[1] if found and found[0] == blob else None
+
+
+def public_line(path: str) -> tuple[str | None, str]:
+    """The public half of the key at path as pub stores it, or why there's none: the .pub line
+    when it's this key's, comment and all, else the key the private key file holds."""
+    found = _private(path)
+    if isinstance(found, str):
+        return None, found
+    target, text, _ = found
+    blob, other_format = private_public(text)
+    if other_format:
+        return None, "pair unchecked"
+    try:
+        kind = _blob_type(blob) if blob is not None else None
+    except ValueError:
+        kind = None
+    if kind is None:
+        return None, "not a key"
+    return pub_file_line(target, blob) or f"{kind} {base64.b64encode(blob).decode()}", ""
+
+
+def pair_line(path: str) -> str | None:
+    """The .pub line of the key pair at path, when both files are there and hold the same key."""
+    found = _private(path)
+    if isinstance(found, str):
+        return None
+    target, text, _ = found
+    blob, _ = private_public(text)
+    return pub_file_line(target, blob) if blob is not None else None
+
+
+def own_name() -> str:
+    """This user's login, as ssh-keygen writes it in a key's default comment."""
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def comment(name: str) -> str:
+    """A new key's comment: ari's name for it, then ssh-keygen's own user@host."""
+    return f"{name} {own_name()}@{socket.gethostname()}"
+
+
+def generate(target: str, text: str) -> int:
+    """ssh-keygen for a new ed25519 key at target, on this terminal: it asks for the passphrase
+    itself, so ari never sees it. Its exit status."""
+    keygen = shutil.which("ssh-keygen")
+    if keygen is None:
+        raise FileNotFoundError("ssh-keygen")
+    return subprocess.run([keygen, "-t", "ed25519", "-f", target, "-C", text]).returncode
+
+
 def state(path: str, pub: str | None, now: datetime | None = None) -> list[str]:
     """What ssh, run by this user, would hit at the key's path, in words; ["ok"] when nothing.
     A key ssh can't read stops there. Otherwise its mode as ssh checks it, the public halves
     against the one the private key holds, and the certificate beside it."""
-    target, why = resolve(path)
-    if target is None:
-        return [why]
-    try:
-        st = os.stat(target)
-    except (FileNotFoundError, NotADirectoryError):
-        return ["missing"]
-    except OSError:
-        return ["unreadable"]
-    if not stat.S_ISREG(st.st_mode):
-        return ["not a file"]
-    text = _read(target)
-    if text is None:
-        return ["unreadable"]
+    found = _private(path)
+    if isinstance(found, str):
+        return [found]
+    target, text, st = found
     words = []
     mode = stat.S_IMODE(st.st_mode)
     # ssh ignores a private key of yours that group or others can touch, and only one of yours.
@@ -176,8 +253,8 @@ def state(path: str, pub: str | None, now: datetime | None = None) -> list[str]:
         # ssh offers the key a readable .pub describes, then won't sign with a private key that
         # isn't its pair. A .pub that holds no key it skips, so that says nothing either way.
         beside = _read(target + ".pub")
-        found = public_blob(beside) if beside is not None else None
-        if found is not None and found != blob:
+        other = public_blob(beside) if beside is not None else None
+        if other is not None and other != blob:
             words.append(".pub mismatch")
         if pub is not None and public_blob(pub) != blob:
             words.append("pub stale")

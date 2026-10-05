@@ -30,7 +30,7 @@ ari - keep SSH hosts in one place and generate ssh config and Ansible inventory 
 
 **ari group** [*NAME* [*OPTIONS*]]
 
-**ari key** [*NAME* [**--path** *PATH* | **--rm**]]
+**ari key** [*NAME* [**--path** *PATH*] [**--new** | **--pub**] | *NAME* **--rm**]
 
 **ari modules**
 
@@ -167,9 +167,15 @@ With *NAME*, declare that key in one inventory, **-i**, then **ARI_INVENTORY**, 
 | Option | Meaning |
 |-------|-------------|
 | **--path** *PATH* | The private key file, written as IdentityFile. Moving a key moves every host that uses it |
+| **--new** | Generate the key at its path with ssh-keygen, then fill **pub** |
+| **--pub** | Fill **pub** from the key file |
 | **--rm** | Remove the key; takes no other option |
 
 Two keys in one inventory can't share a file, since **--key** *PATH* has to name one of them. **--rm** is refused while the defaults or any host list the key, naming them, and nothing is saved. A command that changes nothing saves nothing.
+
+**--new** runs `ssh-keygen -t ed25519 -f` *PATH* `-C "`*NAME* *USER*`@`*HOST*`"` on the terminal, so ssh-keygen asks for the passphrase itself and **ari** never sees it, then stores the new *PATH*`.pub` line as **pub**. With **--path** it declares or moves the key first, in the same command. It needs a terminal, and everything is checked before ssh-keygen runs, so a refusal leaves no key behind: the path has to be one **ari** can name in your own home or elsewhere, its directory has to exist, and *PATH*, *PATH*`.pub` and *PATH*`-cert.pub` must all be free. ssh-keygen only asks before replacing the private key and writes the `.pub` over whatever is there, and an old `.pub` can be the last trace of a key a server still trusts, so **ari** never removes or overwrites key files: move them away first. If ssh-keygen fails or is interrupted, or doesn't leave a matching pair, nothing is saved.
+
+**--pub** stores the key file's public half: the *PATH*`.pub` line, comment included, when it holds this key, otherwise the key type and key read from the private key file. A key **ari** can't read, or a PEM key, whose public half needs its passphrase, is refused and nothing is saved.
 
 ## modules
 
@@ -337,7 +343,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 
 Every group a host uses is declared under **groups**, even as an empty `{}`, so a typo fails instead of creating a group. **ari group** declares and changes them. A declaration takes three optional keys: **description**, whose first line is a zone's section header in the hosts file and whose further lines become comments under it; **children**, the group's child groups; and **reasons**, an ordered map of reason key to text.
 
-Every key a host or the defaults list is declared under **keys**, by a name with no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`. **ari key** declares, moves and removes them. A declaration holds the private key's **path**, and **pub**, the public key, which **ari** keeps as written and **ari key** checks against the key file but doesn't fill yet. A host that lists keys uses those instead of the defaults' list, not on top of them.
+Every key a host or the defaults list is declared under **keys**, by a name with no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`. **ari key** declares, moves and removes them. A declaration holds the private key's **path**, and **pub**, the public key, which **ari key** fills with **--new** or **--pub** and checks against the key file. A host that lists keys uses those instead of the defaults' list, not on top of them.
 
 Options take a string. **CertificateFile**, **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv** can also take a list, since ssh uses every line of those; any other keyword uses only its first line, so a list there doesn't load. A list of one is stored as its string. A host's value for a keyword replaces the default's, lists included.
 

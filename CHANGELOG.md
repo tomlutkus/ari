@@ -5,6 +5,8 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 ## Unreleased
 
 - `ari key` has a STATE column saying what ssh would find at each key's path: `ok`, or every problem, comma separated. A key file that's missing, unreadable, open to group or others, not a private key, or that disagrees with its `.pub` or the declared `pub`, and the validity of a `-cert.pub` beside it, read with `ssh-keygen -L`. Paths resolve as ssh resolves them; a relative path, one with `%` tokens or `${}`, or an unknown `~user` shows only that. Nothing else reads key files, so `export` still works on a machine that doesn't hold every key.
+- `ari key NAME --new` generates the key at its path with `ssh-keygen -t ed25519`, commented with the key's name and your `user@host`, and stores its public half as `pub`. ssh-keygen runs on the terminal and asks for the passphrase itself. It never writes over anything: a key, `.pub` or `-cert.pub` already at the path is refused, as is a relative path, one in another user's home or one whose directory doesn't exist, all before ssh-keygen runs. Nothing is saved if ssh-keygen fails or is interrupted. With `--path` it declares the key in the same command.
+- `ari key NAME --pub` fills `pub` from the key file: the `.pub` line when it holds this key, otherwise the public half the private key file holds.
 
 ## 0.7.1 (2026-10-05)
 

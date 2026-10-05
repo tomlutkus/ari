@@ -2,7 +2,9 @@
 
 import copy
 import getpass
+import os
 import re
+import shutil
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
@@ -462,15 +464,57 @@ def list_keys(cfg: Config, scope: str | None = None) -> list[KeyRow]:
 
 @dataclass
 class KeyChanges:
-    """What ari key changes: the file a key names, or the key itself with remove."""
+    """What ari key changes: the file a key names, a new key generated there, pub read from the
+    key file, or the key itself with remove."""
 
     path: str | None = None
+    new: bool = False
+    pub: bool = False
     remove: bool = False
 
 
+def _declaration_problems(inventory: Inventory, name: str, key: KeyDef, where: str) -> list[str]:
+    problems = []
+    try:
+        check_key_name(name, inventory.name)
+    except HostsError as e:
+        problems.append(str(e))
+    try:
+        KeyDef.from_dict(key.to_dict(), where)
+    except HostsError as e:
+        problems.append(str(e))
+    other = next((n for n, k in inventory.keys.items() if n != name and k.path == key.path), None)
+    if other:
+        problems.append(f"{where}: {key.path} is already the file of key {other!r}")
+    return problems
+
+
+def _new_key_problems(path: str, where: str) -> list[str]:
+    """Why --new can't write at path. It only writes into an empty slot of this user's: ssh-keygen
+    asks only about the private file, and would overwrite a .pub left there, which may be the
+    last trace of a key some server still trusts."""
+    target, why = keyfiles.resolve(path)
+    if target is None:
+        return [f"{where}: --new can't write to {path} ({why})"]
+    user = path[1:].partition("/")[0] if path.startswith("~") else ""
+    if user and user != keyfiles.own_name():
+        return [f"{where}: --new can't write to {path} (another user's home)"]
+    problems = []
+    if not os.path.isdir(os.path.dirname(target)):
+        problems.append(f"{where}: {os.path.dirname(path)} isn't a directory")
+    for suffix in ("", ".pub", "-cert.pub"):
+        if os.path.lexists(target + suffix):
+            problems.append(f"{where}: {path}{suffix} already exists")
+    if shutil.which("ssh-keygen") is None:
+        problems.append("ssh-keygen isn't installed")
+    return problems
+
+
 def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tuple[Inventory, str]:
-    """Declare a key, move it to another file, or remove it. Returns the inventory and declared,
-    updated, unchanged or removed. Nothing is saved if any check fails, and every problem is listed."""
+    """Declare a key, move it to another file, generate it, fill its pub, or remove it. Returns
+    the inventory and declared, updated, unchanged or removed. Nothing is saved if any check
+    fails, and every problem is listed. --new checks everything before ssh-keygen runs, so a
+    refusal leaves no key behind, and saves nothing unless ssh-keygen leaves a pair."""
     inventory = storage.load(cfg.get(inventory_name))
     existing = inventory.keys.get(name)
     where = f"{inventory.name}: key {name!r}"
@@ -492,25 +536,46 @@ def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tup
         storage.save(inventory)
         return inventory, "removed"
 
+    if c.new and c.pub:
+        raise HostsError("--new fills pub itself; drop --pub")
     if c.path is None:
         if existing is None:
             raise HostsError(f"no key {name!r} in {inventory.name}; --path PATH declares it")
-        raise HostsError("nothing to change; pass --path or --rm")
-    problems = []
-    try:
-        check_key_name(name, inventory.name)
-    except HostsError as e:
-        problems.append(str(e))
-    key = KeyDef(c.path, existing.pub if existing else None)
-    try:
-        KeyDef.from_dict(key.to_dict(), where)
-    except HostsError as e:
-        problems.append(str(e))
-    other = next((n for n, k in inventory.keys.items() if n != name and k.path == c.path), None)
-    if other:
-        problems.append(f"{where}: {c.path} is already the file of key {other!r}")
-    if problems:
-        raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+        if not (c.new or c.pub):
+            raise HostsError("nothing to change; pass --path, --new, --pub or --rm")
+    key = KeyDef(c.path if c.path is not None else existing.path, existing.pub if existing else None)
+    problems = _declaration_problems(inventory, name, key, where)
+    if c.new:
+        problems += _new_key_problems(key.path, where)
+        if problems:
+            exist = any(p.endswith("already exists") for p in problems)
+            hint = "\nari never removes or overwrites key files; move these away first" if exist else ""
+            raise HostsError("no key generated, nothing saved:\n  " + "\n  ".join(problems) + hint)
+        target = keyfiles.resolve(key.path)[0]
+        try:
+            code = keyfiles.generate(target, keyfiles.comment(name))
+        except FileNotFoundError:
+            raise HostsError("ssh-keygen isn't installed; nothing saved") from None
+        if code != 0:
+            raise HostsError(f"ssh-keygen exited {code}; nothing saved")
+        key.pub = keyfiles.pair_line(key.path)
+        if key.pub is None:
+            raise HostsError(f"ssh-keygen left no key pair at {key.path}; nothing saved")
+        # The passphrase prompt can sit for a while: save against the inventory as it is now.
+        inventory = storage.load(cfg.get(inventory_name))
+        existing = inventory.keys.get(name)
+        problems = _declaration_problems(inventory, name, key, where)
+        if problems:
+            raise HostsError(f"generated {key.path}, but nothing saved:\n  " + "\n  ".join(problems))
+    else:
+        if problems:
+            raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+        if c.pub:
+            line, why = keyfiles.public_line(key.path)
+            if line is None:
+                hint = f"; ssh-keygen -p -f {key.path} rewrites it in OpenSSH format" if why == "pair unchecked" else ""
+                raise HostsError(f"{where}: no public half to read from {key.path} ({why}){hint}; nothing saved")
+            key.pub = line
     if existing == key:
         return inventory, "unchanged"
     inventory.keys[name] = key

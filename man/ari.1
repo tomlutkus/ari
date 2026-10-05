@@ -51,8 +51,9 @@ inventory from them
 [\f[I]OPTIONS\f[R]]]
 .PP
 \f[B]ari key\f[R] [\f[I]NAME\f[R]
-[\f[B]--path\f[R] \f[I]PATH\f[R] |
-\f[B]--rm\f[R]]]
+[\f[B]--path\f[R] \f[I]PATH\f[R]]
+[\f[B]--new\f[R] | \f[B]--pub\f[R]] |
+\f[I]NAME\f[R] \f[B]--rm\f[R]]
 .PP
 \f[B]ari modules\f[R]
 .PP
@@ -662,6 +663,17 @@ Moving a key moves every host that uses
 it
 T}
 T{
+\f[B]--new\f[R]
+T}@T{
+Generate the key at its path with
+ssh-keygen, then fill \f[B]pub\f[R]
+T}
+T{
+\f[B]--pub\f[R]
+T}@T{
+Fill \f[B]pub\f[R] from the key file
+T}
+T{
 \f[B]--rm\f[R]
 T}@T{
 Remove the key; takes no other option
@@ -676,6 +688,52 @@ defaults or any host list the key,
 naming them, and nothing is saved.
 A command that changes nothing saves
 nothing.
+.PP
+\f[B]--new\f[R] runs
+\f[V]ssh-keygen -t ed25519 -f\f[R]
+\f[I]PATH\f[R]
+\f[V]-C \[dq]\f[R]\f[I]NAME\f[R]
+\f[I]USER\f[R]\f[V]\[at]\f[R]\f[I]HOST\f[R]\f[V]\[dq]\f[R]
+on the terminal, so ssh-keygen asks for
+the passphrase itself and \f[B]ari\f[R]
+never sees it, then stores the new
+\f[I]PATH\f[R]\f[V].pub\f[R] line as
+\f[B]pub\f[R].
+With \f[B]--path\f[R] it declares or
+moves the key first, in the same
+command.
+It needs a terminal, and everything is
+checked before ssh-keygen runs, so a
+refusal leaves no key behind: the path
+has to be one \f[B]ari\f[R] can name in
+your own home or elsewhere, its
+directory has to exist, and
+\f[I]PATH\f[R],
+\f[I]PATH\f[R]\f[V].pub\f[R] and
+\f[I]PATH\f[R]\f[V]-cert.pub\f[R] must
+all be free.
+ssh-keygen only asks before replacing
+the private key and writes the
+\f[V].pub\f[R] over whatever is there,
+and an old \f[V].pub\f[R] can be the
+last trace of a key a server still
+trusts, so \f[B]ari\f[R] never removes
+or overwrites key files: move them away
+first.
+If ssh-keygen fails or is interrupted,
+or doesn\[aq]t leave a matching pair,
+nothing is saved.
+.PP
+\f[B]--pub\f[R] stores the key
+file\[aq]s public half: the
+\f[I]PATH\f[R]\f[V].pub\f[R] line,
+comment included, when it holds this
+key, otherwise the key type and key read
+from the private key file.
+A key \f[B]ari\f[R] can\[aq]t read, or a
+PEM key, whose public half needs its
+passphrase, is refused and nothing is
+saved.
 .SS modules
 .PP
 List the installed modules, whether each
@@ -1424,9 +1482,9 @@ removes them.
 A declaration holds the private
 key\[aq]s \f[B]path\f[R], and
 \f[B]pub\f[R], the public key, which
-\f[B]ari\f[R] keeps as written and
-\f[B]ari key\f[R] checks against the key
-file but doesn\[aq]t fill yet.
+\f[B]ari key\f[R] fills with
+\f[B]--new\f[R] or \f[B]--pub\f[R] and
+checks against the key file.
 A host that lists keys uses those
 instead of the defaults\[aq] list, not
 on top of them.
