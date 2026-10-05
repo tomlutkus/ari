@@ -9,6 +9,7 @@ import os
 import pwd
 import re
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -224,11 +225,26 @@ def comment(name: str) -> str:
 
 def generate(target: str, text: str) -> int:
     """ssh-keygen for a new ed25519 key at target, on this terminal: it asks for the passphrase
-    itself, so ari never sees it. Its exit status."""
+    itself, so ari never sees it. Its exit status, or KeyboardInterrupt once it's gone if Ctrl-C
+    stopped it. As system(3) does, ari only notes a Ctrl-C while ssh-keygen runs, so the
+    interrupt can't land halfway through the TUI taking the terminal back."""
     keygen = shutil.which("ssh-keygen")
     if keygen is None:
         raise FileNotFoundError("ssh-keygen")
-    return subprocess.run([keygen, "-t", "ed25519", "-f", target, "-C", text]).returncode
+    interrupted: list[int] = []
+    try:
+        # A handler, unlike SIG_IGN, is reset to the default in ssh-keygen, so Ctrl-C still stops it.
+        previous = signal.signal(signal.SIGINT, lambda signum, frame: interrupted.append(signum))
+    except ValueError:  # not the main thread, where signals can't be handled: leave them be
+        previous = None
+    try:
+        code = subprocess.run([keygen, "-t", "ed25519", "-f", target, "-C", text]).returncode
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)
+    if interrupted or code == -signal.SIGINT:
+        raise KeyboardInterrupt
+    return code
 
 
 def state(path: str, pub: str | None, now: datetime | None = None) -> list[str]:

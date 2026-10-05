@@ -457,7 +457,7 @@ def list_keys(cfg: Config, scope: str | None = None) -> list[KeyRow]:
         inventory = storage.load(ic)
         for name, key in inventory.keys.items():
             direct = sum(name in h.keys for h in inventory.hosts)
-            total = sum(name in inventory.host_keys(h) for h in inventory.hosts)
+            total = sum(uses_key(inventory, h, name) for h in inventory.hosts)
             rows.append(KeyRow(inventory, name, key, direct, total, keyfiles.state(key.path, key.pub)))
     return rows
 
@@ -510,12 +510,9 @@ def _new_key_problems(path: str, where: str) -> list[str]:
     return problems
 
 
-def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tuple[Inventory, str]:
-    """Declare a key, move it to another file, generate it, fill its pub, or remove it. Returns
-    the inventory and declared, updated, unchanged or removed. Nothing is saved if any check
-    fails, and every problem is listed. --new checks everything before ssh-keygen runs, so a
-    refusal leaves no key behind, and saves nothing unless ssh-keygen leaves a pair."""
-    inventory = storage.load(cfg.get(inventory_name))
+def _key_target(inventory: Inventory, name: str, c: KeyChanges) -> tuple[KeyDef | None, KeyDef | None]:
+    """The key as it is and as it would be, after every check write_key runs before it writes or
+    runs ssh-keygen. Raises with every problem; None as it would be when removing."""
     existing = inventory.keys.get(name)
     where = f"{inventory.name}: key {name!r}"
     if c.remove:
@@ -532,10 +529,7 @@ def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tup
             problems.append(f"{where} is still listed by {_hosts(inventory, users)}")
         if problems:
             raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
-        del inventory.keys[name]
-        storage.save(inventory)
-        return inventory, "removed"
-
+        return existing, None
     if c.new and c.pub:
         raise HostsError("--new fills pub itself; drop --pub")
     if c.path is None:
@@ -551,6 +545,30 @@ def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tup
             exist = any(p.endswith("already exists") for p in problems)
             hint = "\nari never removes or overwrites key files; move these away first" if exist else ""
             raise HostsError("no key generated, nothing saved:\n  " + "\n  ".join(problems) + hint)
+    elif problems:
+        raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+    return existing, key
+
+
+def check_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> None:
+    """Raise what write_key would refuse before it writes anything or runs ssh-keygen, so the TUI
+    can say why before it asks a question or hands the terminal over."""
+    _key_target(storage.load(cfg.get(inventory_name)), name, c)
+
+
+def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tuple[Inventory, str]:
+    """Declare a key, move it to another file, generate it, fill its pub, or remove it. Returns
+    the inventory and declared, updated, unchanged or removed. Nothing is saved if any check
+    fails, and every problem is listed. --new checks everything before ssh-keygen runs, so a
+    refusal leaves no key behind, and saves nothing unless ssh-keygen leaves a pair."""
+    inventory = storage.load(cfg.get(inventory_name))
+    existing, key = _key_target(inventory, name, c)
+    if key is None:
+        del inventory.keys[name]
+        storage.save(inventory)
+        return inventory, "removed"
+    where = f"{inventory.name}: key {name!r}"
+    if c.new:
         target = keyfiles.resolve(key.path)[0]
         try:
             code = keyfiles.generate(target, keyfiles.comment(name))
@@ -567,20 +585,22 @@ def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tup
         problems = _declaration_problems(inventory, name, key, where)
         if problems:
             raise HostsError(f"generated {key.path}, but nothing saved:\n  " + "\n  ".join(problems))
-    else:
-        if problems:
-            raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
-        if c.pub:
-            line, why = keyfiles.public_line(key.path)
-            if line is None:
-                hint = f"; ssh-keygen -p -f {key.path} rewrites it in OpenSSH format" if why == "pair unchecked" else ""
-                raise HostsError(f"{where}: no public half to read from {key.path} ({why}){hint}; nothing saved")
-            key.pub = line
+    elif c.pub:
+        line, why = keyfiles.public_line(key.path)
+        if line is None:
+            hint = f"; ssh-keygen -p -f {key.path} rewrites it in OpenSSH format" if why == "pair unchecked" else ""
+            raise HostsError(f"{where}: no public half to read from {key.path} ({why}){hint}; nothing saved")
+        key.pub = line
     if existing == key:
         return inventory, "unchanged"
     inventory.keys[name] = key
     storage.save(inventory)
     return inventory, "declared" if existing is None else "updated"
+
+
+def uses_key(inventory: Inventory, host: Host, name: str) -> bool:
+    """Whether ssh offers the host the key: in its own list, or the defaults' when it has none."""
+    return name in inventory.host_keys(host)
 
 
 # Import

@@ -8,6 +8,7 @@ import pwd
 import re
 import select
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -322,9 +323,10 @@ KEYGEN = shutil.which("ssh-keygen")
 PROMPT = re.compile(r"passphrase[^\n]*?: ")
 
 
-def on_a_pty(home: Path, argv: list[str], answers: list[str], timeout: float = 30) -> tuple[int, str]:
+def on_a_pty(home: Path, argv: list[str], answers: list[str], timeout: float = 30, pause: float = 0) -> tuple[int, str]:
     """Run ari on a fresh pty that is its controlling terminal, as a shell would, answering each
-    passphrase prompt in turn. Its exit status and everything it printed."""
+    passphrase prompt in turn, pause seconds after it shows. Its exit status and everything it
+    printed."""
     env = {**os.environ, "XDG_CONFIG_HOME": str(home / "config"), "XDG_STATE_HOME": str(home / "state")}
     pid, fd = pty.fork()
     if pid == 0:
@@ -347,6 +349,7 @@ def on_a_pty(home: Path, argv: list[str], answers: list[str], timeout: float = 3
         seen += chunk
         # One answer per prompt, never ahead of it: ssh-keygen flushes input as it turns echo off.
         if pending and len(PROMPT.findall(seen)) > len(answers) - len(pending):
+            time.sleep(pause)
             os.write(fd, pending.pop(0).encode())
     _, status = os.waitpid(pid, 0)
     os.close(fd)
@@ -378,7 +381,39 @@ def test_ctrl_c_at_the_passphrase_saves_nothing(home):
     write_config(home, PERSONAL_ONLY)
     target = home / "keys" / "real"
     target.parent.mkdir()
-    code, printed = on_a_pty(home, ["key", "real", "--path", str(target), "--new", "-i", "personal"], ["\x03"])
+    # A person needs a moment to press it. ssh-keygen prints its prompt before it starts reading,
+    # and a Ctrl-C in that instant only takes effect once Enter ends the read.
+    argv = ["key", "real", "--path", str(target), "--new", "-i", "personal"]
+    code, printed = on_a_pty(home, argv, ["\x03"], pause=0.5)
     assert code == 130, printed
     assert not target.exists() and not target.with_name("real.pub").exists()
     assert not (home / "config" / "ari" / "personal.json").exists()
+
+
+# Ctrl-C while ssh-keygen has the terminal
+
+INTERRUPTED = r'''#!PYTHON
+import os, signal, sys
+how = os.environ["FAKE_KEYGEN"]
+if how in ("both", "parent"):
+    os.kill(os.getppid(), signal.SIGINT)  # what Ctrl-C does to ari: the whole foreground group gets it
+if how in ("both", "child"):
+    os.kill(os.getpid(), signal.SIGINT)
+'''
+
+
+@pytest.mark.parametrize("how", ["both", "parent", "child"])
+def test_ctrl_c_is_raised_only_once_ssh_keygen_is_gone(home, monkeypatch, how):
+    """The interrupt never lands while ssh-keygen runs, or in whatever ari does as it ends: the TUI
+    taking the terminal back. generate raises it afterwards, with ari's own handler back."""
+    bin_dir = home / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "ssh-keygen"
+    fake.write_text(INTERRUPTED.replace("PYTHON", sys.executable))
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_KEYGEN", how)
+    before = signal.getsignal(signal.SIGINT)
+    with pytest.raises(KeyboardInterrupt):
+        keyfiles.generate(str(home / "k"), "k tom@laptop")
+    assert signal.getsignal(signal.SIGINT) is before

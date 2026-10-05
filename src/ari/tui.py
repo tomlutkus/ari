@@ -3,6 +3,8 @@
 import getpass
 import re
 import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from rich.table import Table
 from rich.text import Text
@@ -13,7 +15,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Checkbox, DataTable, Footer, Input, Label, Select, SelectionList, Static, TextArea
 from textual.widgets.selection_list import Selection
 
-from . import core
+from . import core, keyfiles
 from .config import Config
 from .errors import HostsError
 from .models import Host, Inventory
@@ -421,6 +423,190 @@ class GroupPicker(Screen[str | None]):
         self.dismiss(host.name)
 
 
+Declared = tuple[str, str]  # inventory, name
+
+
+@dataclass(frozen=True)
+class Kind:
+    """What a declarations screen lists, and the core calls behind its keys: keys now, groups
+    next. rows gives each declaration's inventory, name and cells, in the order core lists them."""
+
+    noun: str
+    columns: tuple[str, ...]
+    rows: Callable[[Config, str | None], list[tuple[str, str, list[Text]]]]
+    uses: Callable[[Inventory, Host, str], bool]  # the hosts Enter narrows the list to
+    check_remove: Callable[[Config, str, str], None]
+    remove: Callable[[Config, str, str], object]
+    removing: str  # the question d asks, with {name} and {inventory}
+    empty: str  # what the screen says when nothing is declared
+    check_generate: Callable[[Config, str, str], None] | None = None
+    generate: Callable[[Config, str, str], str] | None = None  # what to report once it's done
+    generator: str = ""  # the program generate hands the terminal to
+
+
+def _key_rows(cfg: Config, scope: str | None) -> list[tuple[str, str, list[Text]]]:
+    rows = []
+    for row in core.list_keys(cfg, scope):
+        hosts = Text(str(row.total))
+        if row.direct != row.total:
+            hosts.append(f" ({row.direct} direct)", style="dim")
+        state = Text(", ".join(row.state), style="dim" if row.state == [keyfiles.OK] else "")
+        cells = [Text(row.name), hosts, Text(row.key.path), state, Text(row.inventory.name, style="dim")]
+        rows.append((row.inventory.name, row.name, cells))
+    return rows
+
+
+def _new_key(cfg: Config, inventory: str, name: str) -> str:
+    saved, _ = core.write_key(cfg, inventory, name, core.KeyChanges(new=True))
+    return f"generated {saved.keys[name].path} for {name} ({inventory})"
+
+
+KEYS = Kind(
+    noun="key",
+    columns=("KEY", "HOSTS", "PATH", "STATE", "INV"),
+    rows=_key_rows,
+    uses=core.uses_key,
+    check_remove=lambda cfg, inventory, name: core.check_key(cfg, inventory, name, core.KeyChanges(remove=True)),
+    remove=lambda cfg, inventory, name: core.write_key(cfg, inventory, name, core.KeyChanges(remove=True)),
+    removing="Remove key {name} from {inventory}? Its files stay.",
+    empty="no keys declared; ari key NAME --path PATH declares one",
+    check_generate=lambda cfg, inventory, name: core.check_key(cfg, inventory, name, core.KeyChanges(new=True)),
+    generate=_new_key,
+    generator="ssh-keygen",
+)
+
+
+class Declarations(Screen):
+    """Every declaration of one kind in scope. Enter goes back to the host list narrowed to the
+    hosts that use the one under the cursor; d removes it, or says why core won't; n, for a kind
+    that generates, hands the terminal over, as s does for ssh."""
+
+    BINDINGS = [
+        Binding("enter", "narrow", "Hosts"),
+        Binding("n", "generate", "New key"),
+        Binding("d", "remove", "Delete"),
+        Binding("escape", "back", "Back"),
+        Binding("q", "app.quit", "Quit"),
+    ]
+
+    def __init__(self, cfg: Config, scope: str | None, kind: Kind) -> None:
+        super().__init__()
+        self.cfg = cfg
+        self.scope = scope
+        self.kind = kind
+        self.shown: list[Declared] = []
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.kind.empty, id="empty")
+        yield DataTable(id="declarations", cursor_type="row")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one(DataTable)
+        for label in self.kind.columns:
+            table.add_column(label)
+        self.reload()
+        table.focus()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        return action != "generate" or self.kind.generate is not None
+
+    def reload(self, fallback: int = 0, prefer: Declared | None = None) -> None:
+        """Read the declarations again, the cursor on prefer, or its own row, or row fallback."""
+        table = self.query_one(DataTable)
+        keep = prefer or self.selected()
+        try:
+            rows = self.kind.rows(self.cfg, self.scope)
+        except HostsError as e:
+            self.app.notify(str(e), severity="error")
+            return
+        table.clear()
+        self.shown = []
+        for inventory, name, cells in rows:
+            table.add_row(*cells, key=f"{inventory}\t{name}")
+            self.shown.append((inventory, name))
+        self.query_one("#empty").display = not self.shown
+        if keep in self.shown:
+            table.move_cursor(row=self.shown.index(keep))
+        elif self.shown:
+            table.move_cursor(row=min(fallback, len(self.shown) - 1))
+
+    def selected(self) -> Declared | None:
+        table = self.query_one(DataTable)
+        if not 0 <= table.cursor_row < len(self.shown):
+            return None
+        return self.shown[table.cursor_row]
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        self.action_narrow()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+        self.app.hosts.reload(self.app.hosts.query_one(DataTable).cursor_row)
+
+    def action_narrow(self) -> None:
+        row = self.selected()
+        if row:
+            self.app.pop_screen()
+            self.app.hosts.narrow_to(self.kind, *row)
+
+    def action_remove(self) -> None:
+        row = self.selected()
+        if not row:
+            return
+        inventory, name = row
+        try:
+            self.kind.check_remove(self.cfg, inventory, name)
+        except HostsError as e:
+            self.app.notify(str(e), severity="error")
+            return
+        index = self.query_one(DataTable).cursor_row
+
+        def answered(yes: bool | None) -> None:
+            if not yes:
+                return
+            try:
+                self.kind.remove(self.cfg, inventory, name)
+            except HostsError as e:
+                self.app.notify(str(e), severity="error")
+            else:
+                self.app.notify(f"removed {name} from {inventory}")
+            self.reload(fallback=index)
+
+        self.app.push_screen(Confirm(self.kind.removing.format(name=name, inventory=inventory)), answered)
+
+    def action_generate(self) -> None:
+        row = self.selected()
+        if not row or self.kind.generate is None or self.kind.check_generate is None:
+            return
+        inventory, name = row
+        # Everything core would refuse is said here, before the terminal is handed over.
+        try:
+            self.kind.check_generate(self.cfg, inventory, name)
+        except HostsError as e:
+            self.app.notify(str(e), severity="error")
+            return
+        done: str | None = None
+        failed: str | None = None
+        try:
+            with self.app.suspend():
+                # Nothing may leave this block by raising: suspend only resumes the app when it ends.
+                try:
+                    done = self.kind.generate(self.cfg, inventory, name)
+                except HostsError as e:
+                    failed = str(e)
+                except KeyboardInterrupt:
+                    failed = f"{self.kind.generator} interrupted; nothing saved"
+        except SuspendNotSupported:
+            self.app.notify(f"this terminal can't hand over to {self.kind.generator}", severity="error")
+            return
+        if failed:
+            self.app.notify(failed, severity="error")
+        else:
+            self.app.notify(done or "")
+        self.reload(prefer=row)
+
+
 class HostList(Screen):
     """Every host in scope, narrowed by the filter the way ls --search narrows."""
 
@@ -433,6 +619,7 @@ class HostList(Screen):
         Binding("g", "groups", "Groups"),
         Binding("d", "delete", "Delete"),
         Binding("x", "export", "Export"),
+        Binding("k", "keys", "Keys"),
         Binding("q", "app.quit", "Quit"),
         Binding("escape", "clear", "Clear filter", show=False),
     ]
@@ -444,9 +631,12 @@ class HostList(Screen):
         self.modules = modules
         self.rows = rows
         self.shown: list[Row] = []
+        # Set by Enter on a declarations screen: only the hosts that use that declaration show.
+        self.narrow: tuple[Kind, str, str] | None = None
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="filter", id="filter")
+        yield Static(id="narrow")
         yield DataTable(id="hosts", cursor_type="row")
         yield Footer()
 
@@ -454,8 +644,25 @@ class HostList(Screen):
         table = self.query_one(DataTable)
         for label in ("NAME", "HOSTNAME", "USER", "INV", *(m.upper() for m in self.modules), "GROUPS"):
             table.add_column(label)
+        self.query_one("#narrow").display = False
         self.refilter("")
         table.focus()
+
+    def _narrowed(self, inventory: Inventory, host: Host) -> bool:
+        if self.narrow is None:
+            return True
+        kind, where, name = self.narrow
+        return inventory.name == where and kind.uses(inventory, host, name)
+
+    def narrow_to(self, kind: Kind, inventory: str, name: str) -> None:
+        """Show only the hosts that use one declaration, as its HOSTS column counts them. The
+        filter still narrows within them, and Escape clears both."""
+        self.narrow = (kind, inventory, name)
+        label = self.query_one("#narrow", Static)
+        label.update(Text.assemble(f"hosts using {kind.noun} {name} ({inventory})", ("  Escape shows every host", "dim")))
+        label.display = True
+        self.reload()
+        self.query_one(DataTable).focus()
 
     def _cells(self, inventory: Inventory, host: Host) -> list[Text]:
         user = inventory.user(host)
@@ -478,7 +685,7 @@ class HostList(Screen):
         table = self.query_one(DataTable)
         current = self.selected()
         keep = prefer or (current[1].name if current else None)
-        self.shown = [row for row in self.rows if core.matches(*row, text)]
+        self.shown = [row for row in self.rows if core.matches(*row, text) and self._narrowed(*row)]
         table.clear()
         for inventory, host in self.shown:
             table.add_row(*self._cells(inventory, host), key=host.name)
@@ -516,8 +723,14 @@ class HostList(Screen):
         self.query_one(Input).focus()
 
     def action_clear(self) -> None:
+        self.narrow = None
+        self.query_one("#narrow").display = False
         self.query_one(Input).value = ""
+        self.refilter("")
         self.query_one(DataTable).focus()
+
+    def action_keys(self) -> None:
+        self.app.push_screen(Declarations(self.cfg, self.scope, KEYS))
 
     def action_details(self) -> None:
         row = self.selected()
@@ -618,6 +831,8 @@ class Browser(App):
     ENABLE_COMMAND_PALETTE = False
     CSS = """
     #details, #report, #form, #picker { padding: 1 2; }
+    #empty { padding: 1 2; }
+    #narrow { padding: 0 1; }
     #form .row { height: auto; }
     #form .row Label { width: 14; padding: 1 1 0 0; }
     #form .row Input, #form .row Select { width: 1fr; }
@@ -632,8 +847,9 @@ class Browser(App):
     Confirm { align: center middle; }
     #dialog { width: auto; height: auto; padding: 1 3; border: thick $error; background: $surface; }
     """
-    # q quits only where nothing is unsaved: the list, a host's details and an export report bind it.
-    # In the form, the picker and the delete prompt it's just a key, and Escape is the way out.
+    # q quits only where nothing is unsaved: the list, a host's details, an export report and the
+    # keys screen bind it. In the form, the picker and the delete prompts it's just a key, and
+    # Escape is the way out.
 
     def __init__(self, cfg: Config, scope: str | None, modules: list[str], rows: list[Row]) -> None:
         super().__init__()

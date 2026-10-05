@@ -1014,16 +1014,21 @@ T}@T{
 In the filter, back to the list.
 In the list, the selected host\[aq]s
 details, as \f[B]show\f[R] prints them.
-In an export report, back to the list
+In an export report, back to the list.
+In the keys screen, back to the list
+showing only the hosts that use the
+selected key
 T}
 T{
 \f[B]Escape\f[R]
 T}@T{
 In the list or the filter, clear the
-filter.
-In a host\[aq]s details or an export
-report, back to the list.
-In the form, the group picker or the
+filter, and show every host again after
+the keys screen narrowed the list.
+In a host\[aq]s details, an export
+report or the keys screen, back to the
+list.
+In the form, the group picker or a
 delete prompt, back without saving
 T}
 T{
@@ -1070,7 +1075,14 @@ answers the prompt; \f[B]n\f[R] or
 \f[B]Escape\f[R] keeps it.
 The list reads the inventories again,
 and the cursor lands on the row that
-took the host\[aq]s place
+took the host\[aq]s place.
+In the keys screen, remove the selected
+key the same way, as \f[B]ari key\f[R]
+\f[I]NAME\f[R] \f[B]--rm\f[R] does; its
+files stay.
+A key the defaults or a host still list
+isn\[aq]t offered: the TUI says why
+instead of asking
 T}
 T{
 \f[B]x\f[R]
@@ -1084,12 +1096,32 @@ overwriting it takes \f[B]ari export
 --force\f[R]
 T}
 T{
+\f[B]k\f[R]
+T}@T{
+In the list, the keys screen below
+T}
+T{
+\f[B]n\f[R]
+T}@T{
+In the keys screen, generate the
+selected key\[aq]s file, as \f[B]ari
+key\f[R] \f[I]NAME\f[R] \f[B]--new\f[R]
+does.
+The TUI hands the terminal to
+ssh-keygen, which asks for the
+passphrase, and comes back when it\[aq]s
+done.
+Anything \f[B]--new\f[R] would refuse,
+the TUI says before handing the terminal
+over
+T}
+T{
 \f[B]q\f[R]
 T}@T{
-In the list, a host\[aq]s details or an
-export report, quit.
+In the list, a host\[aq]s details, an
+export report or the keys screen, quit.
 In the form, the group picker and the
-delete prompt it\[aq]s an ordinary key,
+delete prompts it\[aq]s an ordinary key,
 so nothing unsaved is lost to it
 T}
 .TE
@@ -1130,6 +1162,22 @@ After a save the list reads the
 inventories again with the cursor on the
 host, and says so when the filter hides
 it.
+.PP
+The keys screen lists the declared keys
+of every inventory, or of the one
+\f[B]-i\f[R] names, as \f[B]ari key\f[R]
+does: KEY, HOSTS, PATH, STATE and INV.
+\f[B]Enter\f[R] on a key goes back to
+the list showing only the hosts ssh
+offers it to, the ones HOSTS counts,
+with a line above the list naming the
+key.
+The filter still narrows within them,
+and \f[B]Escape\f[R] shows every host
+again.
+ssh-keygen stopped with
+\f[B]Ctrl+C\f[R], or failing, brings the
+TUI back with nothing saved.
 .PP
 The group picker lists the
 inventory\[aq]s declared groups in the
