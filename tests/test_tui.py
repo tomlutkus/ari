@@ -403,7 +403,7 @@ def stored(home, inventory="work") -> dict:
 
 
 def fill(form, **values):
-    """Set the form's inputs as if typed: name, hostname, user, port, ssh_key, notes, aliases, options."""
+    """Set the form's inputs as if typed: name, hostname, user, port, keys, notes, aliases, options."""
     for field, value in values.items():
         if field == "options":
             form.query_one("#f-options", TextArea).text = value
@@ -510,7 +510,7 @@ def test_e_shows_the_hosts_own_values_and_the_defaults_it_inherits(hosts):
         assert form.query_one("#f-user", Input).value == "" and form.query_one("#f-port", Input).value == ""
         assert form.query_one("#f-user", Input).placeholder == "deploy (default)"
         assert form.query_one("#f-port", Input).placeholder == "2222 (default)"
-        assert form.query_one("#f-ssh_key", Input).placeholder == "~/.ssh/lab-ed25519 (default)"
+        assert form.query_one("#f-keys", Input).placeholder == "lab-ed25519 (default)"
         await pilot.press("escape", "escape")
         form = await edit(pilot, "web-01")
         assert form.query_one("#f-user", Input).value == "admin" and form.query_one("#f-port", Input).value == "22"
@@ -858,7 +858,7 @@ def test_no_arguments_without_a_terminal_prints_help(hosts, monkeypatch, capsys)
     assert "usage: ari" in capsys.readouterr().out
 
 
-def test_the_form_shows_a_key_file_and_each_line_of_a_listed_option(hosts):
+def test_the_form_shows_key_names_and_each_line_of_a_listed_option(hosts):
     data = json.loads(work_json(hosts).read_text())
     for host in data["hosts"]:
         if host["name"] == "web-01":
@@ -868,7 +868,7 @@ def test_the_form_shows_a_key_file_and_each_line_of_a_listed_option(hosts):
 
     async def script(pilot):
         form = await edit(pilot, "web-01")
-        assert form.query_one("#f-ssh_key", Input).value == "~/.ssh/web"
+        assert form.query_one("#f-keys", Input).value == "web"
         assert form.query_one("#f-options", TextArea).text == "LocalForward 5432 localhost:5432\nLocalForward 8080 localhost:80"
         fill(form, notes="db tunnel")
         await pilot.press("ctrl+s")
@@ -879,3 +879,43 @@ def test_the_form_shows_a_key_file_and_each_line_of_a_listed_option(hosts):
     web = stored(hosts)["web-01"]
     assert web["notes"] == "db tunnel" and web["keys"] == ["web"]
     assert web["modules"]["ssh"]["options"] == {"LocalForward": ["5432 localhost:5432", "8080 localhost:80"]}
+
+
+def test_the_keys_field_sets_the_list_in_order_and_shows_problems_under_it(hosts):
+    for name in ("a", "b"):
+        main(["key", name, "--path", f"~/.ssh/{name}", "-i", "work"])
+
+    async def script(pilot):
+        form = await edit(pilot, "web-01")
+        assert form.query_one("#f-keys", Input).value == ""
+        fill(form, keys="b nope")
+        await pilot.press("ctrl+s")
+        assert app.screen is form and list(errors(form)) == ["keys"]
+        assert "key 'nope' isn't declared" in errors(form)["keys"]
+        fill(form, keys="b a")
+        await pilot.press("ctrl+s")
+        assert app.screen is app.hosts
+        form = await edit(pilot, "web-01")
+        assert form.query_one("#f-keys", Input).value == "b a"
+        fill(form, keys="")
+        await pilot.press("ctrl+s")
+
+    app = browser()
+    drive(app, script)
+    assert "keys" not in stored(hosts)["web-01"]
+
+
+def test_details_list_each_key_with_its_file(hosts):
+    main(["key", "a", "--path", "~/.ssh/a", "-i", "work"])
+    main(["edit", "web-01", "--key", "a", "--key", "lab-ed25519"])
+
+    async def script(pilot):
+        await find(pilot, "web-01")
+        await pilot.press("enter")
+        console = Console(width=100, record=True)
+        console.print(app.screen.query_one(Static).content)
+        text = "\n".join(line.rstrip() for line in console.export_text().splitlines())
+        assert "keys       a (~/.ssh/a)\n           lab-ed25519 (~/.ssh/lab-ed25519)\n" in text
+
+    app = browser()
+    drive(app, script)

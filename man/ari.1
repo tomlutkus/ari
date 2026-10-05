@@ -50,6 +50,10 @@ inventory from them
 \f[B]ari group\f[R] [\f[I]NAME\f[R]
 [\f[I]OPTIONS\f[R]]]
 .PP
+\f[B]ari key\f[R] [\f[I]NAME\f[R]
+[\f[B]--path\f[R] \f[I]PATH\f[R] |
+\f[B]--rm\f[R]]]
+.PP
 \f[B]ari modules\f[R]
 .PP
 \f[B]ari import\f[R] \f[I]MODULE\f[R]
@@ -190,8 +194,9 @@ T{
 T}@T{
 Only hosts with \f[I]TEXT\f[R] in any
 field, case-insensitive.
-User, port and key match their effective
-values, defaults included
+User, port and keys match their
+effective values, defaults included, and
+keys match by name and by file
 T}
 T{
 \f[B]--group\f[R] \f[I]GROUP\f[R]
@@ -209,6 +214,9 @@ Values inherited from inventory defaults
 are marked \f[B](default)\f[R], and a
 group\[aq]s reason shows in parentheses
 after it.
+\f[B]keys\f[R] lists each key ssh
+offers, in order, one per line with its
+file.
 .SS add \f[I]NAME\f[R] \f[I]HOSTNAME\f[R]
 .PP
 Add a host to one inventory:
@@ -239,11 +247,10 @@ T}@T{
 ssh port, 1-65535
 T}
 T{
-\f[B]--key\f[R] \f[I]PATH\f[R]
+\f[B]--key\f[R] \f[I]NAME\f[R]
 T}@T{
-Private key file: the key declared at
-\f[I]PATH\f[R], declared when
-there\[aq]s none
+A declared key, by name or by its file;
+repeatable, in the order ssh offers them
 T}
 T{
 \f[B]--notes\f[R] \f[I]TEXT\f[R]
@@ -261,7 +268,9 @@ T{
 \f[B]--opt\f[R]
 \f[I]KEY\f[R]=\f[I]VALUE\f[R]
 T}@T{
-Another ssh option; repeatable
+Another ssh option; repeatable, every
+value for one \f[I]KEY\f[R] making its
+value
 T}
 T{
 \f[B]--group\f[R]
@@ -312,6 +321,12 @@ Drop an alias, matched
 case-insensitively; repeatable
 T}
 T{
+\f[B]--unkey\f[R] \f[I]NAME\f[R]
+T}@T{
+Drop one of the host\[aq]s own keys, by
+name or file; repeatable
+T}
+T{
 \f[B]--ungroup\f[R] \f[I]GROUP\f[R]
 T}@T{
 Leave a group, and its reason with it;
@@ -325,12 +340,50 @@ T}
 .TE
 .PP
 An empty value clears a field:
-\f[B]--user \[aq]\[aq]\f[R], \f[B]--port
-\[aq]\[aq]\f[R] and \f[B]--key
-\[aq]\[aq]\f[R] go back to the inventory
-default, \f[B]--notes \[aq]\[aq]\f[R]
-empties the notes, and \f[B]--opt\f[R]
+\f[B]--user \[aq]\[aq]\f[R] and
+\f[B]--port \[aq]\[aq]\f[R] go back to
+the inventory default, \f[B]--key
+\[aq]\[aq]\f[R] drops the host\[aq]s own
+keys so the defaults\[aq] apply again,
+\f[B]--notes \[aq]\[aq]\f[R] empties the
+notes, and \f[B]--opt\f[R]
 \f[I]KEY\f[R]= removes that option.
+.PP
+A host that lists keys uses those
+instead of the defaults\[aq] keys, so
+the first \f[B]--key\f[R] on a host that
+follows the defaults gives it a list of
+its own.
+Each \f[B]--key\f[R] appends to that
+list after \f[B]--unkey\f[R] has run, so
+\f[B]--unkey\f[R] \f[I]OLD\f[R]
+\f[B]--key\f[R] \f[I]NEW\f[R] swaps one
+key for another, and \f[B]--key
+\[aq]\[aq]\f[R] \f[B]--key\f[R]
+\f[I]A\f[R] \f[B]--key\f[R] \f[I]B\f[R]
+sets the list outright.
+A key that isn\[aq]t declared is
+refused, with the \f[B]ari key\f[R]
+command that declares it.
+.PP
+Every \f[B]--opt\f[R] given for one
+keyword in one command is that
+keyword\[aq]s new value.
+Two or more make a list, which only
+\f[B]LocalForward\f[R],
+\f[B]RemoteForward\f[R],
+\f[B]DynamicForward\f[R] and
+\f[B]SendEnv\f[R] accept, since ssh
+reads only the first line of any other
+keyword.
+So \f[B]--opt\f[R]
+\f[I]LocalForward=A\f[R] \f[B]--opt\f[R]
+\f[I]LocalForward=B\f[R] sets both
+forwards, and a later \f[B]--opt\f[R]
+\f[I]LocalForward=C\f[R] replaces them
+with one.
+A keyword both set and cleared in one
+command is refused.
 \f[B]--group\f[R] sets membership
 exactly as given, so naming a group the
 host is already in without a reason
@@ -344,10 +397,11 @@ included.
 \f[B]--ungroup\f[R] a group the host
 isn\[aq]t in, \f[B]--unalias\f[R] a name
 that isn\[aq]t one of its aliases,
-\f[B]--include\f[R] a module it
-doesn\[aq]t exclude, and clearing an
-option it doesn\[aq]t have are errors,
-not silent no-ops.
+\f[B]--unkey\f[R] a key it doesn\[aq]t
+list itself, \f[B]--include\f[R] a
+module it doesn\[aq]t exclude, and
+clearing an option it doesn\[aq]t have
+are errors, not silent no-ops.
 An edit that changes nothing saves
 nothing.
 .SS rm \f[I]NAME\f[R]
@@ -455,6 +509,63 @@ nothing.
 \f[B]export\f[R] still applies each
 module\[aq]s own rules, such as which
 Ansible file a group is routed to.
+.SS key [\f[I]NAME\f[R]]
+.PP
+Without \f[I]NAME\f[R], list the
+declared keys of every inventory, or
+only the one named with \f[B]-i\f[R], in
+the order they\[aq]re declared.
+HOSTS counts the hosts ssh offers the
+key to, including those that take it
+from the defaults, with the hosts that
+list it themselves beside it when the
+two differ.
+Every column is whole: when the table
+doesn\[aq]t fit, its rows run past the
+edge, so a name or a path never reads
+cut short.
+.PP
+With \f[I]NAME\f[R], declare that key in
+one inventory, \f[B]-i\f[R], then
+\f[B]ARI_INVENTORY\f[R], then
+\f[B]default\f[R] from config.toml, or
+change it if it\[aq]s declared already.
+A name has no spaces: letters, digits
+and \f[V]_ . + \[at] -\f[R], starting
+with a letter, digit or \f[V]_\f[R].
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+Option
+T}@T{
+Meaning
+T}
+_
+T{
+\f[B]--path\f[R] \f[I]PATH\f[R]
+T}@T{
+The private key file, written as
+IdentityFile.
+Moving a key moves every host that uses
+it
+T}
+T{
+\f[B]--rm\f[R]
+T}@T{
+Remove the key; takes no other option
+T}
+.TE
+.PP
+Two keys in one inventory can\[aq]t
+share a file, since \f[B]--key\f[R]
+\f[I]PATH\f[R] has to name one of them.
+\f[B]--rm\f[R] is refused while the
+defaults or any host list the key,
+naming them, and nothing is saved.
+A command that changes nothing saves
+nothing.
 .SS modules
 .PP
 List the installed modules, whether each
@@ -798,7 +909,8 @@ T}
 .PP
 The form holds the inventory (on
 \f[B]a\f[R] only), name, hostname, user,
-port, key, notes, aliases separated by
+port, keys by name in the order ssh
+offers them, notes, aliases separated by
 spaces, ssh options one per line as
 ssh_config takes them (\f[I]KEYWORD
 VALUE\f[R] or
@@ -806,12 +918,15 @@ VALUE\f[R] or
 a box per module to exclude the host
 from.
 Groups aren\[aq]t on it.
-An empty user, port or key follows the
+An empty user, port or keys follows the
 inventory default, which shows in the
 empty field; emptying one that\[aq]s set
 goes back to the default, as
 \f[B]\[aq]\[aq]\f[R] does for
 \f[B]edit\f[R].
+A keyword on several lines of the ssh
+options holds them all, as several
+\f[B]--opt\f[R] for it would.
 .PP
 \f[B]Tab\f[R] moves to the next field,
 and so does \f[B]Enter\f[R] in a
@@ -1175,6 +1290,8 @@ declared under \f[B]keys\f[R], by a name
 with no spaces: letters, digits and
 \f[V]_ . + \[at] -\f[R], starting with a
 letter, digit or \f[V]_\f[R].
+\f[B]ari key\f[R] declares, moves and
+removes them.
 A declaration holds the private
 key\[aq]s \f[B]path\f[R], and
 \f[B]pub\f[R], the public key, which

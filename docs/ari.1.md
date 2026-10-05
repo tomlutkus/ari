@@ -30,6 +30,8 @@ ari - keep SSH hosts in one place and generate ssh config and Ansible inventory 
 
 **ari group** [*NAME* [*OPTIONS*]]
 
+**ari key** [*NAME* [**--path** *PATH* | **--rm**]]
+
 **ari modules**
 
 **ari import** *MODULE* [*SOURCE*] [**--exclude** *MODULE*]
@@ -78,12 +80,12 @@ GROUPS shows as many of a host's groups as fit beside the other columns, in the 
 
 | Option | Meaning |
 |-------|-------------|
-| **--search** *TEXT* | Only hosts with *TEXT* in any field, case-insensitive. User, port and key match their effective values, defaults included |
+| **--search** *TEXT* | Only hosts with *TEXT* in any field, case-insensitive. User, port and keys match their effective values, defaults included, and keys match by name and by file |
 | **--group** *GROUP* | Only hosts in *GROUP* |
 
 ## show *NAME*
 
-Show one host, found by name or alias in any inventory, with every field. **-i** narrows the search to one inventory. Values inherited from inventory defaults are marked **(default)**, and a group's reason shows in parentheses after it.
+Show one host, found by name or alias in any inventory, with every field. **-i** narrows the search to one inventory. Values inherited from inventory defaults are marked **(default)**, and a group's reason shows in parentheses after it. **keys** lists each key ssh offers, in order, one per line with its file.
 
 ## add *NAME* *HOSTNAME*
 
@@ -93,10 +95,10 @@ Add a host to one inventory: **-i**, then **ARI_INVENTORY**, then **default** fr
 |-------|-------------|
 | **--user** *USER* | Login name |
 | **--port** *PORT* | ssh port, 1-65535 |
-| **--key** *PATH* | Private key file: the key declared at *PATH*, declared when there's none |
+| **--key** *NAME* | A declared key, by name or by its file; repeatable, in the order ssh offers them |
 | **--notes** *TEXT* | Free text: a comment above the Host block, and the Ansible description |
 | **--alias** *ALIAS* | Another name on the Host line; repeatable |
-| **--opt** *KEY*=*VALUE* | Another ssh option; repeatable |
+| **--opt** *KEY*=*VALUE* | Another ssh option; repeatable, every value for one *KEY* making its value |
 | **--group** *GROUP*[:*REASON*] | Join a declared group, with an optional reason key; repeatable |
 | **--exclude** *MODULE* | Keep the host out of *MODULE*'s output; repeatable |
 
@@ -109,10 +111,15 @@ Change a host, found by name or alias. **-i** narrows the search to one inventor
 | **--hostname** *HOSTNAME* | New address |
 | **--rename** *NAME* | New name |
 | **--unalias** *ALIAS* | Drop an alias, matched case-insensitively; repeatable |
+| **--unkey** *NAME* | Drop one of the host's own keys, by name or file; repeatable |
 | **--ungroup** *GROUP* | Leave a group, and its reason with it; repeatable |
 | **--include** *MODULE* | Undo an **--exclude**; repeatable |
 
-An empty value clears a field: **--user ''**, **--port ''** and **--key ''** go back to the inventory default, **--notes ''** empties the notes, and **--opt** *KEY*= removes that option. **--group** sets membership exactly as given, so naming a group the host is already in without a reason drops its reason. **--unalias** runs before **--alias**, so **--unalias** *OLD* **--alias** *NEW* swaps one alias for another, a change of case included. **--ungroup** a group the host isn't in, **--unalias** a name that isn't one of its aliases, **--include** a module it doesn't exclude, and clearing an option it doesn't have are errors, not silent no-ops. An edit that changes nothing saves nothing.
+An empty value clears a field: **--user ''** and **--port ''** go back to the inventory default, **--key ''** drops the host's own keys so the defaults' apply again, **--notes ''** empties the notes, and **--opt** *KEY*= removes that option.
+
+A host that lists keys uses those instead of the defaults' keys, so the first **--key** on a host that follows the defaults gives it a list of its own. Each **--key** appends to that list after **--unkey** has run, so **--unkey** *OLD* **--key** *NEW* swaps one key for another, and **--key ''** **--key** *A* **--key** *B* sets the list outright. A key that isn't declared is refused, with the **ari key** command that declares it.
+
+Every **--opt** given for one keyword in one command is that keyword's new value. Two or more make a list, which only **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv** accept, since ssh reads only the first line of any other keyword. So **--opt** *LocalForward=A* **--opt** *LocalForward=B* sets both forwards, and a later **--opt** *LocalForward=C* replaces them with one. A keyword both set and cleared in one command is refused. **--group** sets membership exactly as given, so naming a group the host is already in without a reason drops its reason. **--unalias** runs before **--alias**, so **--unalias** *OLD* **--alias** *NEW* swaps one alias for another, a change of case included. **--ungroup** a group the host isn't in, **--unalias** a name that isn't one of its aliases, **--unkey** a key it doesn't list itself, **--include** a module it doesn't exclude, and clearing an option it doesn't have are errors, not silent no-ops. An edit that changes nothing saves nothing.
 
 ## rm *NAME*
 
@@ -135,6 +142,19 @@ With *NAME*, declare that group in one inventory, **-i**, then **ARI_INVENTORY**
 Nothing a host relies on can go. **--rm** is refused while any host is in the group, directly or through a child, or while another group lists it as a child. **--unchild** is refused when the parent would lose a host it reaches only through that child. Removing a reason is refused while a host gives it. Each refusal names the hosts and how they get there, and nothing is saved.
 
 The other checks match **add** and **edit**: every child is declared, children form no cycle, and every problem is listed at once. Dropping a child or a reason the group doesn't have is an error. A command that changes nothing saves nothing. **export** still applies each module's own rules, such as which Ansible file a group is routed to.
+
+## key [*NAME*]
+
+Without *NAME*, list the declared keys of every inventory, or only the one named with **-i**, in the order they're declared. HOSTS counts the hosts ssh offers the key to, including those that take it from the defaults, with the hosts that list it themselves beside it when the two differ. Every column is whole: when the table doesn't fit, its rows run past the edge, so a name or a path never reads cut short.
+
+With *NAME*, declare that key in one inventory, **-i**, then **ARI_INVENTORY**, then **default** from config.toml, or change it if it's declared already. A name has no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`.
+
+| Option | Meaning |
+|-------|-------------|
+| **--path** *PATH* | The private key file, written as IdentityFile. Moving a key moves every host that uses it |
+| **--rm** | Remove the key; takes no other option |
+
+Two keys in one inventory can't share a file, since **--key** *PATH* has to name one of them. **--rm** is refused while the defaults or any host list the key, naming them, and nothing is saved. A command that changes nothing saves nothing.
 
 ## modules
 
@@ -185,7 +205,7 @@ The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and 
 | **x** | In the list, export what the TUI lists, as **ari export** does: each file as export reports it, or every problem that stopped it, with nothing written. A hand-edited target stays refused; overwriting it takes **ari export --force** |
 | **q** | In the list, a host's details or an export report, quit. In the form, the group picker and the delete prompt it's an ordinary key, so nothing unsaved is lost to it |
 
-The form holds the inventory (on **a** only), name, hostname, user, port, key, notes, aliases separated by spaces, ssh options one per line as ssh_config takes them (*KEYWORD VALUE* or *KEYWORD*=*VALUE*), and a box per module to exclude the host from. Groups aren't on it. An empty user, port or key follows the inventory default, which shows in the empty field; emptying one that's set goes back to the default, as **''** does for **edit**.
+The form holds the inventory (on **a** only), name, hostname, user, port, keys by name in the order ssh offers them, notes, aliases separated by spaces, ssh options one per line as ssh_config takes them (*KEYWORD VALUE* or *KEYWORD*=*VALUE*), and a box per module to exclude the host from. Groups aren't on it. An empty user, port or keys follows the inventory default, which shows in the empty field; emptying one that's set goes back to the default, as **''** does for **edit**. A keyword on several lines of the ssh options holds them all, as several **--opt** for it would.
 
 **Tab** moves to the next field, and so does **Enter** in a one-line field; in the ssh options it starts a new line. **Ctrl+S** saves and **Escape** cancels. Saving runs the checks **add** and **edit** run and saves nothing if any fails: each problem shows under the field it's about, and one that belongs to no field at the top. After a save the list reads the inventories again with the cursor on the host, and says so when the filter hides it.
 
@@ -302,7 +322,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 
 Every group a host uses is declared under **groups**, even as an empty `{}`, so a typo fails instead of creating a group. **ari group** declares and changes them. A declaration takes three optional keys: **description**, whose first line is a zone's section header in the hosts file and whose further lines become comments under it; **children**, the group's child groups; and **reasons**, an ordered map of reason key to text.
 
-Every key a host or the defaults list is declared under **keys**, by a name with no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`. A declaration holds the private key's **path**, and **pub**, the public key, which **ari** keeps as written but doesn't fill or check yet. A host that lists keys uses those instead of the defaults' list, not on top of them.
+Every key a host or the defaults list is declared under **keys**, by a name with no spaces: letters, digits and `_ . + @ -`, starting with a letter, digit or `_`. **ari key** declares, moves and removes them. A declaration holds the private key's **path**, and **pub**, the public key, which **ari** keeps as written but doesn't fill or check yet. A host that lists keys uses those instead of the defaults' list, not on top of them.
 
 Options take a string. **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv** can also take a list, since ssh uses every line of those; any other keyword uses only its first line, so a list there doesn't load. A list of one is stored as its string. A host's value for a keyword replaces the default's, lists included.
 

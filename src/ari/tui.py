@@ -118,7 +118,7 @@ TEXT_FIELDS = (
     ("hostname", "hostname"),
     ("user", "user"),
     ("port", "port"),
-    ("ssh_key", "key"),
+    ("keys", "keys"),
     ("notes", "notes"),
     ("aliases", "aliases"),
 )
@@ -158,11 +158,8 @@ class HostForm(Screen[str | None]):
         """The host's own value for a text field, as the input shows it."""
         if self.host is None:
             return ""
-        if field == "ssh_key":
-            inventory = self.inventories[self.inventory]
-            return " ".join(inventory.keys[n].path if n in inventory.keys else n for n in self.host.keys)
         value = getattr(self.host, field)
-        if field == "aliases":
+        if field in ("aliases", "keys"):
             return " ".join(value)
         return "" if value is None else str(value)
 
@@ -172,9 +169,8 @@ class HostForm(Screen[str | None]):
             return f"{defaults.user} (default)" if defaults.user else f"{getpass.getuser()} (whoever connects)"
         if field == "port":
             return f"{defaults.port or 22} (default)"
-        if field == "ssh_key":
-            paths = self.inventories[self.inventory].key_paths(defaults.keys)
-            return f"{' '.join(paths)} (default)" if paths else ""
+        if field == "keys":
+            return f"{' '.join(defaults.keys)} (default)" if defaults.keys else "declared names, space-separated"
         if field == "aliases":
             return "space-separated"
         return ""
@@ -214,7 +210,7 @@ class HostForm(Screen[str | None]):
     def on_select_changed(self, event: Select.Changed) -> None:
         # Placeholders show the defaults of the inventory the host is going into.
         self.inventory = str(event.value)
-        for field in ("user", "port", "ssh_key"):
+        for field in ("user", "port", "keys"):
             self.query_one(f"#f-{field}", Input).placeholder = self._placeholder(field)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -229,9 +225,11 @@ class HostForm(Screen[str | None]):
                 c.rename = value["name"]
             if value["hostname"] != self.host.hostname:
                 c.hostname = value["hostname"]
-        for field in ("user", "port", "ssh_key", "notes"):
+        for field in ("user", "port", "notes"):
             if value[field] != self._own(field):
                 setattr(c, field, value[field])  # an empty one clears the field, so the default applies
+        if value["keys"].split() != (self.host.keys if self.host else []):
+            c.keys = ["", *value["keys"].split()]  # the list as typed, in order; empty goes back to the defaults
 
         old = self.host.aliases if self.host else []
         new = value["aliases"].split()

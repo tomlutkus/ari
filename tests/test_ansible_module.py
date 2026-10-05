@@ -270,7 +270,7 @@ def test_import_prints_the_config_table_until_it_is_configured(home, capsys):
     write_config(home, '[inventories.work.ssh]\npath = "SSH/20-work.conf"\n')
     assert run("-i", "work", "import", "ansible", str(FIXTURES / "ansible")) == 0
     out = capsys.readouterr().out
-    assert "work: defaults set from the source: user deploy, port 22, ssh_key ~/.ssh/lab-ed25519" in out
+    assert "work: defaults set from the source: user deploy, port 22, keys lab-ed25519" in out
     assert "11 groups declared" in out
     assert '[inventories.work.ansible.groups]\n"10-zones.yml" = ["zone_app", "zone_mgmt", "zone_cloud"]' in out
     write_config(home, WORK)

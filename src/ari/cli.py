@@ -126,7 +126,8 @@ def _changes(args: argparse.Namespace) -> core.Changes:
         rename=getattr(args, "new_name", None),
         user=args.user,
         port=args.port,
-        ssh_key=args.key,
+        keys=args.key,
+        unkey=getattr(args, "unkey", []),
         notes=args.notes,
         aliases=args.alias,
         unalias=getattr(args, "unalias", []),
@@ -209,6 +210,42 @@ def cmd_group(cfg: Config, args: argparse.Namespace) -> int:
         out.print(Text(_plural(len(rows), "group"), style="dim"))
         return 0
     inventory, status = core.write_group(cfg, cfg.select(_inventory_arg(args)).name, args.name, changes)
+    done = {
+        "declared": f"declared {args.name} in {inventory.name}",
+        "updated": f"updated {args.name} ({inventory.name})",
+        "unchanged": f"no change to {args.name} ({inventory.name})",
+        "removed": f"removed {args.name} from {inventory.name}",
+    }
+    out.print(done[status], soft_wrap=True)
+    return 0
+
+
+def _key_table(rows: list[core.KeyRow]) -> Table:
+    table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
+    for column in ("KEY", "HOSTS", "PATH", "INV"):
+        table.add_column(column, no_wrap=True)
+    for row in rows:
+        hosts = Text(str(row.total))
+        if row.direct != row.total:
+            hosts.append(f" ({row.direct} direct)", style="dim")
+        table.add_row(Text(row.name), hosts, Text(row.key.path), Text(row.inventory.name, style="dim"))
+    return table
+
+
+def cmd_key(cfg: Config, args: argparse.Namespace) -> int:
+    changes = core.KeyChanges(path=args.path, remove=args.rm)
+    if args.name is None:
+        if changes != core.KeyChanges():
+            raise HostsError("--path and --rm need a key NAME")
+        rows = core.list_keys(cfg, _inventory_arg(args))
+        if not rows:
+            out.print("no keys")
+            return 0
+        # Every column is whole: a name or a path cut short would read as a real one.
+        _print_whole(_key_table(rows))
+        out.print(Text(_plural(len(rows), "key"), style="dim"))
+        return 0
+    inventory, status = core.write_key(cfg, cfg.select(_inventory_arg(args)).name, args.name, changes)
     done = {
         "declared": f"declared {args.name} in {inventory.name}",
         "updated": f"updated {args.name} ({inventory.name})",
@@ -329,7 +366,14 @@ def _host_options(p: argparse.ArgumentParser, edit: bool) -> None:
     clear = "; '' goes back to the default" if edit else ""
     p.add_argument("--user", metavar="USER", help="login name" + clear)
     p.add_argument("--port", metavar="PORT", help="ssh port" + clear)
-    p.add_argument("--key", metavar="PATH", help="private key (IdentityFile)" + clear)
+    p.add_argument(
+        "--key",
+        metavar="NAME",
+        action="append",
+        default=[],
+        help="a declared key, or its file; repeatable, in the order ssh offers them"
+        + ("; '' goes back to the defaults' keys" if edit else ""),
+    )
     p.add_argument("--notes", metavar="TEXT", help="free text, a comment above the Host block")
     p.add_argument("--alias", metavar="ALIAS", action="append", default=[], help="another name; repeatable")
     p.add_argument(
@@ -338,7 +382,7 @@ def _host_options(p: argparse.ArgumentParser, edit: bool) -> None:
         action="append",
         default=[],
         type=_key_value,
-        help="ssh option; repeatable" + ("; KEY= removes it" if edit else ""),
+        help="ssh option; repeatable, every value for one KEY together" + ("; KEY= removes it" if edit else ""),
     )
     p.add_argument(
         "--group",
@@ -353,6 +397,7 @@ def _host_options(p: argparse.ArgumentParser, edit: bool) -> None:
         p.add_argument("--hostname", metavar="HOSTNAME", dest="new_hostname", help="new address")
         p.add_argument("--rename", metavar="NAME", dest="new_name", help="new name")
         p.add_argument("--unalias", metavar="ALIAS", action="append", default=[], help="drop an alias; repeatable")
+        p.add_argument("--unkey", metavar="NAME", action="append", default=[], help="drop one of its keys; repeatable")
         p.add_argument("--ungroup", metavar="GROUP", action="append", default=[], help="leave a group; repeatable")
         p.add_argument("--include", metavar="MODULE", action="append", default=[], help="undo an --exclude; repeatable")
 
@@ -415,6 +460,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     grp.add_argument("--rm", action="store_true", help="remove the group")
     grp.set_defaults(func=cmd_group)
+
+    key = sub.add_parser("key", parents=[common], help="list keys, or declare, move or remove one")
+    key.add_argument("name", metavar="NAME", nargs="?", help="key to declare or change; without it, list keys")
+    key.add_argument("--path", metavar="PATH", help="the private key file, written as IdentityFile")
+    key.add_argument("--rm", action="store_true", help="remove the key")
+    key.set_defaults(func=cmd_key)
 
     mods = sub.add_parser("modules", parents=[common], help="list installed modules and where they're on")
     mods.set_defaults(func=cmd_modules)

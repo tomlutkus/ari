@@ -19,9 +19,9 @@ from .models import (
     Host,
     Inventory,
     KeyDef,
+    check_key_name,
     check_port,
     check_token,
-    declare_key,
     key_name,
     now,
     numbered,
@@ -56,6 +56,7 @@ def _haystack(inventory: Inventory, host: Host) -> list[str]:
         *host.aliases,
         inventory.user(host) or "",
         str(inventory.port(host)),
+        *inventory.host_keys(host),
         *inventory.identity_files(host),
         host.notes,
         *host.groups,
@@ -129,6 +130,13 @@ class Detail:
     note: str = ""
 
 
+def _keys_detail(inventory: Inventory, host: Host) -> Detail:
+    """Each key the host offers, in order, one per line: its name and its file."""
+    names = inventory.host_keys(host)
+    lines = [f"{n} ({inventory.keys[n].path})" if n in inventory.keys else f"{n} (not declared)" for n in names]
+    return Detail("keys", "\n".join(lines) or "-", "(default)" if names and not host.keys else "")
+
+
 def host_details(inventory: Inventory, host: Host) -> list[Detail]:
     """Every field of a host with its effective value, as show prints it and the TUI shows it."""
 
@@ -146,7 +154,7 @@ def host_details(inventory: Inventory, host: Host) -> list[Detail]:
         Detail("hostname", host.hostname),
         inherited("user", host.user, user) if user else Detail("user", getpass.getuser(), "(whoever connects)"),
         inherited("port", host.port, inventory.port(host)),
-        inherited("ssh key", host.keys or None, " ".join(inventory.identity_files(host)) or None),
+        _keys_detail(inventory, host),
         Detail("notes", host.notes or "-"),
         Detail("groups", ", ".join(groups) or "-"),
         Detail("exclude", ", ".join(host.exclude) or "-"),
@@ -426,6 +434,88 @@ def write_group(cfg: Config, inventory_name: str, name: str, c: GroupChanges) ->
     return inventory, "declared" if existing is None else "updated"
 
 
+# Keys
+
+
+@dataclass
+class KeyRow:
+    inventory: Inventory
+    name: str
+    key: KeyDef
+    direct: int  # hosts that list the key
+    total: int  # those plus the hosts that take it from the defaults
+
+
+def list_keys(cfg: Config, scope: str | None = None) -> list[KeyRow]:
+    """Declared keys in declaration order, every inventory unless scope names one."""
+    rows = []
+    for ic in cfg.scope(scope):
+        inventory = storage.load(ic)
+        for name, key in inventory.keys.items():
+            direct = sum(name in h.keys for h in inventory.hosts)
+            total = sum(name in inventory.host_keys(h) for h in inventory.hosts)
+            rows.append(KeyRow(inventory, name, key, direct, total))
+    return rows
+
+
+@dataclass
+class KeyChanges:
+    """What ari key changes: the file a key names, or the key itself with remove."""
+
+    path: str | None = None
+    remove: bool = False
+
+
+def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tuple[Inventory, str]:
+    """Declare a key, move it to another file, or remove it. Returns the inventory and declared,
+    updated, unchanged or removed. Nothing is saved if any check fails, and every problem is listed."""
+    inventory = storage.load(cfg.get(inventory_name))
+    existing = inventory.keys.get(name)
+    where = f"{inventory.name}: key {name!r}"
+    if c.remove:
+        if c != KeyChanges(remove=True):
+            raise HostsError("--rm takes no other options")
+        if existing is None:
+            raise HostsError(f"no key {name!r} in {inventory.name}")
+        # The defaults count as a user, so the hosts that inherit the key are covered by them.
+        problems = []
+        if name in inventory.defaults.keys:
+            problems.append(f"{where} is in the defaults' keys")
+        users = [h.name for h in inventory.hosts if name in h.keys]
+        if users:
+            problems.append(f"{where} is still listed by {_hosts(inventory, users)}")
+        if problems:
+            raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+        del inventory.keys[name]
+        storage.save(inventory)
+        return inventory, "removed"
+
+    if c.path is None:
+        if existing is None:
+            raise HostsError(f"no key {name!r} in {inventory.name}; --path PATH declares it")
+        raise HostsError("nothing to change; pass --path or --rm")
+    problems = []
+    try:
+        check_key_name(name, inventory.name)
+    except HostsError as e:
+        problems.append(str(e))
+    key = KeyDef(c.path, existing.pub if existing else None)
+    try:
+        KeyDef.from_dict(key.to_dict(), where)
+    except HostsError as e:
+        problems.append(str(e))
+    other = next((n for n, k in inventory.keys.items() if n != name and k.path == c.path), None)
+    if other:
+        problems.append(f"{where}: {c.path} is already the file of key {other!r}")
+    if problems:
+        raise HostsError("nothing saved:\n  " + "\n  ".join(problems))
+    if existing == key:
+        return inventory, "unchanged"
+    inventory.keys[name] = key
+    storage.save(inventory)
+    return inventory, "declared" if existing is None else "updated"
+
+
 # Import
 
 
@@ -460,7 +550,7 @@ def _infer_defaults(inventory: Inventory, hosts: list[Host]) -> dict[str, str]:
         names, count = keys.most_common(1)[0]
         if count >= 2:
             inventory.defaults.keys = list(names)
-            chosen["ssh_key"] = " ".join(inventory.key_paths(inventory.defaults.keys))
+            chosen["keys"] = " ".join(inventory.defaults.keys)
     return chosen
 
 
@@ -591,8 +681,8 @@ def import_hosts(
         d = result.defaults
         if fresh:
             target.defaults.user, target.defaults.port, target.defaults.keys = d.user, d.port, list(d.keys)
-            key = " ".join(target.key_paths(d.keys)) or None
-            report.defaults_set = {k: str(v) for k, v in (("user", d.user), ("port", d.port), ("ssh_key", key)) if v is not None}
+            keys = " ".join(d.keys) or None
+            report.defaults_set = {k: str(v) for k, v in (("user", d.user), ("port", d.port), ("keys", keys)) if v is not None}
             report.defaults_from = "the source"
         else:
             # The inventory keeps its own, so each host gets what the source gave it: a host that
@@ -731,15 +821,19 @@ def import_hosts(
 
 @dataclass
 class Changes:
-    """What add and edit change. None leaves a field alone. For user, port, key and notes an empty
-    string clears the field, so the inventory default applies again; an option with an empty value
-    is removed. Values arrive as strings, the way the CLI and the TUI's inputs hand them over."""
+    """What add and edit change. None leaves a field alone. For user, port and notes an empty
+    string clears the field, so the inventory default applies again. keys names declared keys, or
+    their files, appended in order after unkey removes its own; an empty one drops the host's own
+    list, so the defaults' applies again. Every value given for one ssh option is its new value,
+    several making a list, and an empty one removes it. Values arrive as strings, the way the CLI
+    and the TUI's inputs hand them over."""
 
     hostname: str | None = None
     rename: str | None = None
     user: str | None = None
     port: str | None = None
-    ssh_key: str | None = None
+    keys: list[str] = field(default_factory=list)
+    unkey: list[str] = field(default_factory=list)
     notes: str | None = None
     aliases: list[str] = field(default_factory=list)
     unalias: list[str] = field(default_factory=list)
@@ -773,9 +867,15 @@ class HostRefused(HostsError):
         self.problems = problems
 
 
+def resolve_key(inventory: Inventory, given: str) -> str | None:
+    """A declared key by name, or by its file: the first declared there."""
+    if given in inventory.keys:
+        return given
+    return next((name for name, key in inventory.keys.items() if key.path == given), None)
+
+
 def _apply(inventory: Inventory, host: Host, c: Changes) -> list[Problem]:
-    """Apply changes in place. Returns what couldn't be applied; the record checks come after.
-    A key is given as its file, which names the key declared there, or declares one."""
+    """Apply changes in place. Returns what couldn't be applied; the record checks come after."""
     problems = []
     if c.rename is not None:
         host.name = c.rename
@@ -783,13 +883,23 @@ def _apply(inventory: Inventory, host: Host, c: Changes) -> list[Problem]:
         host.hostname = c.hostname
     if c.user is not None:
         host.user = c.user or None
-    if c.ssh_key is not None:
-        if not c.ssh_key:
-            host.keys = []
-        elif "\n" in c.ssh_key or "\r" in c.ssh_key:
-            problems.append(Problem("ssh_key", "key must be one line"))
+    # Removals first, so --unkey old --key new swaps one for the other.
+    for given in c.unkey:
+        name = resolve_key(inventory, given)
+        if name in host.keys:
+            host.keys.remove(name)
+        elif name in inventory.defaults.keys and not host.keys:
+            problems.append(Problem("keys", f"key {given!r} comes from the defaults; --key names the keys to use instead"))
         else:
-            host.keys = [declare_key(inventory.keys, c.ssh_key)]
+            problems.append(Problem("keys", f"doesn't list key {given!r}"))
+    for given in c.keys:
+        name = resolve_key(inventory, given)
+        if not given:
+            host.keys = []
+        elif name is None:
+            problems.append(Problem("keys", f"key {given!r} isn't declared; ari key NAME --path PATH -i {inventory.name} declares one"))
+        else:
+            host.keys.append(name)
     if c.notes is not None:
         host.notes = c.notes
     if c.port is not None:
@@ -808,10 +918,17 @@ def _apply(inventory: Inventory, host: Host, c: Changes) -> list[Problem]:
 
     if c.options:
         own = host.modules.setdefault("ssh", {}).setdefault("options", {})
+        given: dict[str, tuple[str, list[str]]] = {}  # every value per keyword, ssh reading keywords without case
         for key, value in c.options:
+            given.setdefault(key.casefold(), (key, []))[1].append(value)
+        for key, values in given.values():
             current = next((k for k in own if k.casefold() == key.casefold()), None)
-            if value:
-                own[current or key] = value  # a different spelling of a keyword it has keeps its place
+            if all(values):
+                # A different spelling of a keyword it has keeps its place. A list on a keyword ssh
+                # reads once is refused by the ssh module's own check, after this.
+                own[current or key] = values[0] if len(values) == 1 else values
+            elif any(values):
+                problems.append(Problem("options", f"ssh option {key} is both set and cleared"))
             elif current:
                 del own[current]
             else:
@@ -905,7 +1022,7 @@ def _host_problems(
     for token in host.tokens():
         if token.casefold() in owner:
             problems.append(Problem(field_of(token), f"{where}: {token!r} is already used by {owner[token.casefold()]}"))
-    problems += [Problem("ssh_key", p) for p in _key_problems(inventory, host.keys, where)]
+    problems += [Problem("keys", p) for p in _key_problems(inventory, host.keys, where)]
     return problems + [Problem("groups", p) for p in _membership_problems(inventory, host)]
 
 
@@ -931,8 +1048,8 @@ def add_host(cfg: Config, inventory_name: str, name: str, hostname: str, changes
     for flag, used in (("--rename", changes.rename), ("--hostname", changes.hostname)):
         if used is not None:
             raise HostsError(f"{flag} is for edit; add takes the name and hostname as arguments")
-    if changes.ungroup or changes.unalias or changes.include:
-        raise HostsError("--ungroup, --unalias and --include are for edit")
+    if changes.ungroup or changes.unalias or changes.unkey or changes.include:
+        raise HostsError("--ungroup, --unalias, --unkey and --include are for edit")
     inventories = load_all(cfg)
     inventory = inventories[cfg.get(inventory_name).name]
     host = Host(name=name, hostname=hostname)

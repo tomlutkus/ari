@@ -230,7 +230,7 @@ def test_show_and_search_see_every_value(home, capsys):
     assert "1 host" in capsys.readouterr().out
 
 
-# --key PATH names the key declared at that path, or declares one
+# --key names a declared key, by name or by its file
 
 
 @pytest.fixture
@@ -239,9 +239,10 @@ def mixed(home):
     return home
 
 
-def test_key_path_reuses_a_declared_key(mixed, capsys):
+def test_key_takes_a_name_or_a_declared_file(mixed, capsys):
+    assert run("key", "other", "--path", "~/.ssh/other", "-i", "work") == 0
     assert run("edit", "web-01", "--key", "~/.ssh/other") == 0
-    assert run("add", "web-02", "192.0.2.11", "-i", "work", "--key", "~/.ssh/other") == 0
+    assert run("add", "web-02", "192.0.2.11", "-i", "work", "--key", "other") == 0
     assert stored(mixed, "web-01", "work")["keys"] == ["other"] == stored(mixed, "web-02", "work")["keys"]
     assert data(mixed, "work")["keys"] == {"lab-ed25519": {"path": "~/.ssh/lab-ed25519"}, "other": {"path": "~/.ssh/other"}}
 
@@ -252,17 +253,20 @@ def test_the_default_key_path_is_stored_as_no_key_of_its_own(mixed):
 
 
 def test_empty_key_goes_back_to_the_default(mixed, capsys):
-    run("edit", "web-01", "--key", "~/.ssh/other")
+    run("key", "other", "--path", "~/.ssh/other", "-i", "work")
+    run("edit", "web-01", "--key", "other")
     assert run("edit", "web-01", "--key", "") == 0
     assert "keys" not in stored(mixed, "web-01", "work")
     run("show", "web-01")
-    assert "~/.ssh/lab-ed25519  (default)" in capsys.readouterr().out
+    assert "lab-ed25519 (~/.ssh/lab-ed25519)  (default)" in capsys.readouterr().out
 
 
-def test_a_key_path_on_two_lines_is_refused(mixed, capsys):
+def test_an_undeclared_key_is_refused_with_the_way_to_declare_it(mixed, capsys):
     before = path_of(mixed, "work").read_bytes()
-    assert run("edit", "web-01", "--key", "~/.ssh/a\nb") == 1
-    assert "work (web-01): key must be one line" in capsys.readouterr().err
+    assert run("edit", "web-01", "--key", "~/.ssh/new", "--key", "nope") == 1
+    err = capsys.readouterr().err
+    assert "work (web-01): key '~/.ssh/new' isn't declared; ari key NAME --path PATH -i work declares one" in err
+    assert "work (web-01): key 'nope' isn't declared" in err
     assert path_of(mixed, "work").read_bytes() == before
 
 
@@ -333,7 +337,8 @@ def test_a_key_only_a_refused_host_used_isnt_declared(personal, tmp_path, capsys
 
 
 def test_import_conflicts_on_a_different_key_file(personal, tmp_path, capsys):
-    run("add", "a", "192.0.2.1", "--key", "~/.ssh/k")
+    run("key", "k", "--path", "~/.ssh/k")
+    run("add", "a", "192.0.2.1", "--key", "k")
     source = tmp_path / "src.conf"
     source.write_text("Host a\n  HostName 192.0.2.1\n  IdentityFile ~/.ssh/other\n")
     assert run("import", "ssh", str(source)) == 1
@@ -357,9 +362,165 @@ def test_ansible_import_names_the_default_key_first(tmp_path):
 
 def test_ansible_reimport_of_its_own_export_is_unchanged(home, capsys):
     write_mixed(home)
-    run("edit", "web-01", "--key", "~/.ssh/web")
+    assert run("key", "web", "--path", "~/.ssh/web", "-i", "work") == 0
+    assert run("edit", "web-01", "--key", "web") == 0
     run("export")
     capsys.readouterr()
     assert run("-i", "work", "import", "ansible", str(home / "ssh" / "ansible")) == 0
     out = capsys.readouterr().out
     assert "2 unchanged (web-01, vault-01)" in out and "declared" not in out
+
+
+# ari key
+
+
+def test_key_lists_every_inventory_with_hosts_counted_through_the_defaults(mixed, capsys, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "100")
+    run("key", "laptop", "--path", "~/.ssh/laptop", "-i", "personal")
+    run("key", "web", "--path", "~/.ssh/web", "-i", "work")
+    run("edit", "web-01", "--key", "web", "--key", "lab-ed25519")
+    capsys.readouterr()
+    assert run("key") == 0
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    rows = [line.split() for line in lines[2:-1]]
+    assert lines[0].split() == ["KEY", "HOSTS", "PATH", "INV"]
+    assert rows == [
+        ["laptop", "0", "~/.ssh/laptop", "personal"],
+        ["lab-ed25519", "3", "(1", "direct)", "~/.ssh/lab-ed25519", "work"],
+        ["web", "1", "~/.ssh/web", "work"],
+    ]
+    assert lines[-1] == "3 keys"
+    assert run("key", "-i", "personal") == 0
+    assert "lab-ed25519" not in capsys.readouterr().out
+
+
+def test_key_rows_never_cut_a_path(mixed, capsys, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "30")
+    run("key", "deep", "--path", "~/.ssh/a/very/long/directory/for/one/key-ed25519", "-i", "work")
+    capsys.readouterr()
+    run("key")
+    assert "~/.ssh/a/very/long/directory/for/one/key-ed25519" in capsys.readouterr().out
+
+
+def test_key_declares_moves_and_reports_no_change(mixed, capsys):
+    assert run("key", "spare", "--path", "~/.ssh/spare", "-i", "work") == 0
+    assert run("key", "spare", "--path", "~/.ssh/spare", "-i", "work") == 0
+    assert run("key", "lab-ed25519", "--path", "~/.ssh/lab-2026", "-i", "work") == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "declared spare in work", "no change to spare (work)", "updated lab-ed25519 (work)"
+    ]
+    run("export")
+    assert (mixed / "ssh" / "20-work.conf").read_text().count("IdentityFile ~/.ssh/lab-2026\n") == 3
+
+
+@pytest.mark.parametrize(
+    "argv, message",
+    [
+        (["key", "a b", "--path", "~/.ssh/k"], "work: 'a b' can't be a key name"),
+        (["key", "k", "--path", ""], "work: key 'k': path must be one non-empty line"),
+        (["key", "k", "--path", "a\nb"], "path must be one non-empty line"),
+        (["key", "copy", "--path", "~/.ssh/lab-ed25519"], "~/.ssh/lab-ed25519 is already the file of key 'lab-ed25519'"),
+        (["key", "ghost"], "no key 'ghost' in work; --path PATH declares it"),
+        (["key", "lab-ed25519"], "nothing to change; pass --path or --rm"),
+        (["key", "--path", "~/.ssh/k"], "--path and --rm need a key NAME"),
+        (["key", "ghost", "--rm"], "no key 'ghost' in work"),
+        (["key", "lab-ed25519", "--rm", "--path", "x"], "--rm takes no other options"),
+    ],
+)
+def test_key_writes_refuse(mixed, capsys, argv, message):
+    before = path_of(mixed, "work").read_bytes()
+    assert run(*argv, "-i", "work") == 1
+    assert message in capsys.readouterr().err
+    assert path_of(mixed, "work").read_bytes() == before
+
+
+def test_a_key_in_use_cant_be_removed(mixed, capsys):
+    run("key", "web", "--path", "~/.ssh/web", "-i", "work")
+    run("edit", "web-01", "--key", "web")
+    run("edit", "vault-01", "--key", "web", "--key", "lab-ed25519")
+    capsys.readouterr()
+    assert run("key", "lab-ed25519", "--rm", "-i", "work") == 1
+    err = capsys.readouterr().err
+    assert "work: key 'lab-ed25519' is in the defaults' keys" in err
+    assert "work: key 'lab-ed25519' is still listed by 1 host: vault-01" in err
+    assert run("key", "web", "--rm", "-i", "work") == 1
+    assert "is still listed by 2 hosts: vault-01, web-01" in capsys.readouterr().err
+    run("edit", "vault-01", "--key", "")
+    run("edit", "web-01", "--unkey", "web")
+    assert run("key", "web", "--rm", "-i", "work") == 0
+    assert "web" not in data(mixed, "work")["keys"]
+
+
+# add and edit
+
+
+def test_keys_append_in_order_and_unkey_runs_first(mixed, capsys):
+    for name in ("a", "b", "c"):
+        run("key", name, "--path", f"~/.ssh/{name}", "-i", "work")
+    assert run("edit", "web-01", "--key", "b", "--key", "~/.ssh/a") == 0
+    assert stored(mixed, "web-01", "work")["keys"] == ["b", "a"]
+    assert run("edit", "web-01", "--unkey", "b", "--key", "c", "--key", "b") == 0
+    assert stored(mixed, "web-01", "work")["keys"] == ["a", "c", "b"]
+    assert run("edit", "web-01", "--key", "", "--key", "c") == 0
+    assert stored(mixed, "web-01", "work")["keys"] == ["c"]
+    run("export")
+    block = (mixed / "ssh" / "20-work.conf").read_text().split("Host web-01\n")[1]
+    assert "    IdentityFile ~/.ssh/c\n    IdentitiesOnly yes\n" in block
+
+
+@pytest.mark.parametrize(
+    "argv, message",
+    [
+        (["edit", "web-01", "--unkey", "lab-ed25519"], "key 'lab-ed25519' comes from the defaults; --key names the keys to use instead"),
+        (["edit", "fw", "--unkey", "nope"], "work (fw): doesn't list key 'nope'"),
+        (["edit", "web-01", "--key", "lab-ed25519", "--key", "lab-ed25519"], "key 'lab-ed25519' is listed twice"),
+    ],
+)
+def test_key_edits_refuse(mixed, capsys, argv, message):
+    before = path_of(mixed, "work").read_bytes()
+    assert run(*argv) == 1
+    assert message in capsys.readouterr().err
+    assert path_of(mixed, "work").read_bytes() == before
+
+
+def test_show_lists_each_key_with_its_file(mixed, capsys):
+    run("key", "id_rsa-2", "--path", "~/.ssh/new/id_rsa", "-i", "work")
+    run("edit", "web-01", "--key", "id_rsa-2", "--key", "lab-ed25519")
+    capsys.readouterr()
+    run("show", "web-01")
+    out = "\n".join(line.rstrip() for line in capsys.readouterr().out.splitlines())
+    assert "keys       id_rsa-2 (~/.ssh/new/id_rsa)\n           lab-ed25519 (~/.ssh/lab-ed25519)\n" in out
+    run("show", "vault-01")
+    assert "keys       lab-ed25519 (~/.ssh/lab-ed25519)  (default)" in capsys.readouterr().out
+    assert run("ls", "--search", "rsa-2") == 0
+    assert "1 host" in capsys.readouterr().out
+
+
+# --opt: every value for one keyword in one command is its new value
+
+
+def options_of(home, name):
+    return stored(home, name, "work").get("modules", {}).get("ssh", {}).get("options", {})
+
+
+def test_repeated_opt_sets_a_list_and_one_empty_value_removes_it(mixed):
+    assert run("edit", "web-01", "--opt", "LocalForward=5432 localhost:5432", "--opt", "localforward=8080 localhost:80") == 0
+    assert options_of(mixed, "web-01") == {"LocalForward": ["5432 localhost:5432", "8080 localhost:80"]}
+    assert run("edit", "web-01", "--opt", "LocalForward=9000 localhost:9000") == 0
+    assert options_of(mixed, "web-01") == {"LocalForward": "9000 localhost:9000"}
+    assert run("edit", "web-01", "--opt", "LocalForward=") == 0
+    assert options_of(mixed, "web-01") == {}
+
+
+@pytest.mark.parametrize(
+    "argv, message",
+    [
+        (["--opt", "ProxyJump=a", "--opt", "ProxyJump=b"], "option ProxyJump takes one value; ssh reads only the first"),
+        (["--opt", "SendEnv=LANG", "--opt", "SendEnv="], "ssh option SendEnv is both set and cleared"),
+    ],
+)
+def test_opt_repeats_refused(mixed, capsys, argv, message):
+    before = path_of(mixed, "work").read_bytes()
+    assert run("edit", "web-01", *argv) == 1
+    assert message in capsys.readouterr().err
+    assert path_of(mixed, "work").read_bytes() == before
