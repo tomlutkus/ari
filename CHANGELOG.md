@@ -2,6 +2,10 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
+## Unreleased
+
+- Each host can say what it runs: `os`, written by hand, one line. `add` and `edit` set it with `--os 'Ubuntu 24.04'` and `edit --os ''` clears it; the TUI's form has a field for it. `show` and the TUI's details print it, and `ls --search` and the TUI filter match it. No module exports it and import leaves it alone, so every generated file stays the same. The inventory format stays version 3, and a host without `os` stores nothing for it; ari 0.8 refuses a file in which any host has one.
+
 ## 0.8.0 (2026-10-05)
 
 - `ari key` has a STATE column saying what ssh would find at each key's path: `ok`, or every problem, comma separated. A key file that's missing, unreadable, open to group or others, not a private key, or that disagrees with its `.pub` or the declared `pub`, and the validity of a `-cert.pub` beside it, read with `ssh-keygen -L`. Paths resolve as ssh resolves them; a relative path, one with `%` tokens or `${}`, or an unknown `~user` shows only that. Nothing else reads key files, so `export` still works on a machine that doesn't hold every key.

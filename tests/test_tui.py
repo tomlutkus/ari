@@ -403,7 +403,7 @@ def stored(home, inventory="work") -> dict:
 
 
 def fill(form, **values):
-    """Set the form's inputs as if typed: name, hostname, user, port, keys, notes, aliases, options."""
+    """Set the form's inputs as if typed: name, hostname, user, port, keys, os, notes, aliases, options."""
     for field, value in values.items():
         if field == "options":
             form.query_one("#f-options", TextArea).text = value
@@ -566,15 +566,15 @@ def test_the_form_reaches_the_same_record_as_ari_edit(hosts):
     """The same change through the form and through the CLI leaves the same JSON, last_updated aside."""
     async def script(pilot):
         form = await edit(pilot, "vault-01")
-        fill(form, name="vault-1", user="ops", aliases="v1", notes="kept", options="Compression yes")
+        fill(form, name="vault-1", user="ops", aliases="v1", os="Rocky 10.1", notes="kept", options="Compression yes")
         form.query_one("#x-ssh", Checkbox).value = True
         await pilot.press("ctrl+s")
 
     drive(browser(), script)
     by_form = stored(hosts)["vault-1"]
     write_mixed(hosts)
-    assert main(["edit", "vault-01", "--rename", "vault-1", "--user", "ops", "--alias", "v1", "--notes", "kept",
-                 "--opt", "Compression=yes", "--exclude", "ssh"]) == 0
+    assert main(["edit", "vault-01", "--rename", "vault-1", "--user", "ops", "--alias", "v1", "--os", "Rocky 10.1",
+                 "--notes", "kept", "--opt", "Compression=yes", "--exclude", "ssh"]) == 0
     by_cli = stored(hosts)["vault-1"]
     assert {k: v for k, v in by_form.items() if k != "last_updated"} == {k: v for k, v in by_cli.items() if k != "last_updated"}
 
@@ -919,3 +919,34 @@ def test_details_list_each_key_with_its_file(hosts):
 
     app = browser()
     drive(app, script)
+
+
+def test_the_form_and_details_hold_the_os(hosts):
+    """The form shows the host's os, a new value saves, an empty one clears it, and a value
+    of two lines is refused under the os input; details show it as show prints it."""
+    main(["edit", "web-01", "--os", "Ubuntu 24.04"])
+
+    async def script(pilot):
+        form = await edit(pilot, "web-01")
+        assert form.query_one("#f-os", Input).value == "Ubuntu 24.04"
+        fill(form, os="Ubuntu\n26.04")
+        await pilot.press("ctrl+s")
+        assert app.screen is form and list(errors(form)) == ["os"]
+        assert "os must be one non-empty line" in errors(form)["os"]
+        assert app.focused is form.query_one("#f-os", Input)
+        fill(form, os="Ubuntu 26.04")
+        await pilot.press("ctrl+s")
+        assert app.screen is app.hosts and stored(hosts)["web-01"]["os"] == "Ubuntu 26.04"
+        await pilot.press("enter")
+        console = Console(width=100, record=True)
+        console.print(app.screen.query_one(Static).content)
+        assert "os         Ubuntu 26.04" in console.export_text()
+        await pilot.press("escape")
+        form = await edit(pilot, "web-01")
+        fill(form, os="")
+        await pilot.press("ctrl+s")
+        assert app.screen is app.hosts
+
+    app = browser()
+    drive(app, script)
+    assert "os" not in stored(hosts)["web-01"]

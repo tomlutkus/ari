@@ -121,6 +121,7 @@ TEXT_FIELDS = (
     ("user", "user"),
     ("port", "port"),
     ("keys", "keys"),
+    ("os", "os"),
     ("notes", "notes"),
     ("aliases", "aliases"),
 )
@@ -227,7 +228,7 @@ class HostForm(Screen[str | None]):
                 c.rename = value["name"]
             if value["hostname"] != self.host.hostname:
                 c.hostname = value["hostname"]
-        for field in ("user", "port", "notes"):
+        for field in ("user", "port", "os", "notes"):
             if value[field] != self._own(field):
                 setattr(c, field, value[field])  # an empty one clears the field, so the default applies
         if value["keys"].split() != (self.host.keys if self.host else []):

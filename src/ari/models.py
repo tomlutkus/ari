@@ -150,7 +150,7 @@ class _Fields:
             raise HostsError(f"{self.where}: unknown keys {sorted(unknown)}")
 
 
-def _line(value: str | None, what: str, where: str) -> str | None:
+def check_line(value: str | None, what: str, where: str) -> str | None:
     if value is not None and (not value or "\n" in value or "\r" in value):
         raise HostsError(f"{where}: {what} must be one non-empty line")
     return value
@@ -173,7 +173,7 @@ class KeyDef:
     @classmethod
     def from_dict(cls, data: Any, where: str) -> "KeyDef":
         f = _Fields(data, where)
-        key = cls(_line(f.text("path", required=True), "path", where), _line(f.text("pub"), "pub", where))
+        key = cls(check_line(f.text("path", required=True), "path", where), check_line(f.text("pub"), "pub", where))
         f.done()
         return key
 
@@ -186,6 +186,7 @@ class Host:
     user: str | None = None
     port: int | None = None
     keys: list[str] = field(default_factory=list)
+    os: str = ""  # what the host runs, as written by hand; the record's alone, no module exports it
     notes: str = ""
     groups: list[str] = field(default_factory=list)
     reasons: dict[str, str] = field(default_factory=dict)
@@ -207,6 +208,8 @@ class Host:
             out["port"] = self.port
         if self.keys:
             out["keys"] = self.keys
+        if self.os:
+            out["os"] = self.os
         if self.notes:
             out["notes"] = self.notes
         if self.groups:
@@ -239,6 +242,7 @@ class Host:
             user=f.text("user"),
             port=port,
             keys=f.strings("keys"),
+            os=check_line(f.text("os"), "os", where) or "",
             notes=f.text("notes") or "",
             groups=f.strings("groups"),
             reasons=f.mapping("reasons"),

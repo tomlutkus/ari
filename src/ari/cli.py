@@ -128,6 +128,7 @@ def _changes(args: argparse.Namespace) -> core.Changes:
         port=args.port,
         keys=args.key,
         unkey=getattr(args, "unkey", []),
+        os=args.os,
         notes=args.notes,
         aliases=args.alias,
         unalias=getattr(args, "unalias", []),
@@ -376,6 +377,9 @@ def _host_options(p: argparse.ArgumentParser, edit: bool) -> None:
         default=[],
         help="a declared key, or its file; repeatable, in the order ssh offers them"
         + ("; '' goes back to the defaults' keys" if edit else ""),
+    )
+    p.add_argument(
+        "--os", metavar="TEXT", help="what the host runs, as you'd write it: 'Ubuntu 24.04'" + ("; '' clears it" if edit else "")
     )
     p.add_argument("--notes", metavar="TEXT", help="free text, a comment above the Host block")
     p.add_argument("--alias", metavar="ALIAS", action="append", default=[], help="another name; repeatable")

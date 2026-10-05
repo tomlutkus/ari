@@ -22,6 +22,7 @@ from .models import (
     Inventory,
     KeyDef,
     check_key_name,
+    check_line,
     check_port,
     check_token,
     key_name,
@@ -60,6 +61,7 @@ def _haystack(inventory: Inventory, host: Host) -> list[str]:
         str(inventory.port(host)),
         *inventory.host_keys(host),
         *inventory.identity_files(host),
+        host.os,
         host.notes,
         *host.groups,
         *host.reasons.values(),
@@ -157,6 +159,7 @@ def host_details(inventory: Inventory, host: Host) -> list[Detail]:
         inherited("user", host.user, user) if user else Detail("user", getpass.getuser(), "(whoever connects)"),
         inherited("port", host.port, inventory.port(host)),
         _keys_detail(inventory, host),
+        Detail("os", host.os or "-"),
         Detail("notes", host.notes or "-"),
         Detail("groups", ", ".join(groups) or "-"),
         Detail("exclude", ", ".join(host.exclude) or "-"),
@@ -925,8 +928,8 @@ def import_hosts(
 
 @dataclass
 class Changes:
-    """What add and edit change. None leaves a field alone. For user, port and notes an empty
-    string clears the field, so the inventory default applies again. keys names declared keys, or
+    """What add and edit change. None leaves a field alone. For user, port, os and notes an empty
+    string clears the field, so the inventory default, if any, applies again. keys names declared keys, or
     their files, appended in order after unkey removes its own; an empty one drops the host's own
     list, so the defaults' applies again. Every value given for one ssh option is its new value,
     several making a list, and an empty one removes it. Values arrive as strings, the way the CLI
@@ -938,6 +941,7 @@ class Changes:
     port: str | None = None
     keys: list[str] = field(default_factory=list)
     unkey: list[str] = field(default_factory=list)
+    os: str | None = None
     notes: str | None = None
     aliases: list[str] = field(default_factory=list)
     unalias: list[str] = field(default_factory=list)
@@ -1004,6 +1008,8 @@ def _apply(inventory: Inventory, host: Host, c: Changes) -> list[Problem]:
             problems.append(Problem("keys", f"key {given!r} isn't declared; ari key NAME --path PATH -i {inventory.name} declares one"))
         else:
             host.keys.append(name)
+    if c.os is not None:
+        host.os = c.os
     if c.notes is not None:
         host.notes = c.notes
     if c.port is not None:
@@ -1083,6 +1089,7 @@ def _shape_problems(inventory: Inventory, host: Host) -> list[Problem]:
         check("port", check_port, host.port, where)
     for alias in host.aliases:
         check("aliases", check_token, alias, "alias", where)
+    check("os", check_line, host.os or None, "os", where)
     if not problems:
         # Everything else load enforces, from the record as it would be saved.
         check(None, Host.from_dict, host.to_dict(), inventory.name)

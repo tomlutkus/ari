@@ -96,6 +96,7 @@ Add a host to one inventory: **-i**, then **ARI_INVENTORY**, then **default** fr
 | **--user** *USER* | Login name |
 | **--port** *PORT* | ssh port, 1-65535 |
 | **--key** *NAME* | A declared key, by name or by its file; repeatable, in the order ssh offers them |
+| **--os** *TEXT* | What the host runs, as you'd write it: *Ubuntu 24.04*. One line, kept in the inventory only |
 | **--notes** *TEXT* | Free text: a comment above the Host block, and the Ansible description |
 | **--alias** *ALIAS* | Another name on the Host line; repeatable |
 | **--opt** *KEY*=*VALUE* | Another ssh option; repeatable, every value for one *KEY* making its value |
@@ -115,7 +116,7 @@ Change a host, found by name or alias. **-i** narrows the search to one inventor
 | **--ungroup** *GROUP* | Leave a group, and its reason with it; repeatable |
 | **--include** *MODULE* | Undo an **--exclude**; repeatable |
 
-An empty value clears a field: **--user ''** and **--port ''** go back to the inventory default, **--key ''** drops the host's own keys so the defaults' apply again, **--notes ''** empties the notes, and **--opt** *KEY*= removes that option.
+An empty value clears a field: **--user ''** and **--port ''** go back to the inventory default, **--key ''** drops the host's own keys so the defaults' apply again, **--os ''** and **--notes ''** empty those fields, and **--opt** *KEY*= removes that option.
 
 A host that lists keys uses those instead of the defaults' keys, so the first **--key** on a host that follows the defaults gives it a list of its own. Each **--key** appends to that list after **--unkey** has run, so **--unkey** *OLD* **--key** *NEW* swaps one key for another, and **--key ''** **--key** *A* **--key** *B* sets the list outright. A key that isn't declared is refused, with the **ari key** command that declares it.
 
@@ -228,7 +229,7 @@ The list shows NAME, HOSTNAME, USER, INV, a column per module as in **ls**, and 
 | **n** | In the keys screen, generate the selected key's file, as **ari key** *NAME* **--new** does. The TUI hands the terminal to ssh-keygen, which asks for the passphrase, and comes back when it's done. Anything **--new** would refuse, the TUI says before handing the terminal over |
 | **q** | In the list, a host's details, an export report or the keys screen, quit. In the form, the group picker and the delete prompts it's an ordinary key, so nothing unsaved is lost to it |
 
-The form holds the inventory (on **a** only), name, hostname, user, port, keys by name in the order ssh offers them, notes, aliases separated by spaces, ssh options one per line as ssh_config takes them (*KEYWORD VALUE* or *KEYWORD*=*VALUE*), and a box per module to exclude the host from. Groups aren't on it. An empty user, port or keys follows the inventory default, which shows in the empty field; emptying one that's set goes back to the default, as **''** does for **edit**. A keyword on several lines of the ssh options holds them all, as several **--opt** for it would.
+The form holds the inventory (on **a** only), name, hostname, user, port, keys by name in the order ssh offers them, os, notes, aliases separated by spaces, ssh options one per line as ssh_config takes them (*KEYWORD VALUE* or *KEYWORD*=*VALUE*), and a box per module to exclude the host from. Groups aren't on it. An empty user, port or keys follows the inventory default, which shows in the empty field; emptying one that's set goes back to the default, as **''** does for **edit**. A keyword on several lines of the ssh options holds them all, as several **--opt** for it would.
 
 **Tab** moves to the next field, and so does **Enter** in a one-line field; in the ssh options it starts a new line. **Ctrl+S** saves and **Escape** cancels. Saving runs the checks **add** and **edit** run and saves nothing if any fails: each problem shows under the field it's about, and one that belongs to no field at the top. After a save the list reads the inventories again with the cursor on the host, and says so when the filter hides it.
 
@@ -321,6 +322,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
       "name": "vault-01",
       "hostname": "192.0.2.30",
       "aliases": ["vault"],
+      "os": "Rocky 10.1",
       "notes": "secrets store",
       "groups": ["zone_app", "no_auto_update"],
       "reasons": {"no_auto_update": "secrets"},
@@ -338,6 +340,7 @@ Each inventory is one JSON file. Hosts store only what differs from the inventor
 | **aliases** | More names on the Host line |
 | **user**, **port** | Override the inventory defaults |
 | **keys** | Declared keys ssh offers, in order, instead of the default list |
+| **os** | What the host runs, written by hand, one line. Only **ari** reads it: no module exports it and **import** leaves it alone |
 | **notes** | A comment above the Host block, and the Ansible description |
 | **groups** | Groups the host is in, each declared under **groups** |
 | **reasons** | Why the host is in a group: a reason key that group declares |
@@ -357,7 +360,7 @@ A file that fails to parse stops **ari** with the path and the error. It is neve
 
 # VALIDATION
 
-**add** and **edit** check the host they write and save nothing if any check fails, listing every problem at once: the name and aliases are valid ssh host names and unique across all inventories, the hostname has no spaces, the port is 1-65535, every key is declared and listed once, every group is declared, every reason is one its group declares, and each installed module accepts the host's data. ssh options can't repeat a keyword the host has a field for, like **User** or **Port**. The TUI's form and group picker save through these same checks.
+**add** and **edit** check the host they write and save nothing if any check fails, listing every problem at once: the name and aliases are valid ssh host names and unique across all inventories, the hostname has no spaces, the port is 1-65535, os is one line, every key is declared and listed once, every group is declared, every reason is one its group declares, and each installed module accepts the host's data. ssh options can't repeat a keyword the host has a field for, like **User** or **Port**. The TUI's form and group picker save through these same checks.
 
 **group** checks the group it writes the same way: a new name is usable, every child is declared, children form no cycle, and nothing a host relies on is removed. Only problems the write would add stop it; one already elsewhere in the inventory doesn't.
 

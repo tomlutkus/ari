@@ -254,6 +254,13 @@ A declared key, by name or by its file;
 repeatable, in the order ssh offers them
 T}
 T{
+\f[B]--os\f[R] \f[I]TEXT\f[R]
+T}@T{
+What the host runs, as you\[aq]d write
+it: \f[I]Ubuntu 24.04\f[R].
+One line, kept in the inventory only
+T}
+T{
 \f[B]--notes\f[R] \f[I]TEXT\f[R]
 T}@T{
 Free text: a comment above the Host
@@ -346,8 +353,9 @@ An empty value clears a field:
 the inventory default, \f[B]--key
 \[aq]\[aq]\f[R] drops the host\[aq]s own
 keys so the defaults\[aq] apply again,
-\f[B]--notes \[aq]\[aq]\f[R] empties the
-notes, and \f[B]--opt\f[R]
+\f[B]--os \[aq]\[aq]\f[R] and
+\f[B]--notes \[aq]\[aq]\f[R] empty those
+fields, and \f[B]--opt\f[R]
 \f[I]KEY\f[R]= removes that option.
 .PP
 A host that lists keys uses those
@@ -1129,10 +1137,10 @@ T}
 The form holds the inventory (on
 \f[B]a\f[R] only), name, hostname, user,
 port, keys by name in the order ssh
-offers them, notes, aliases separated by
-spaces, ssh options one per line as
-ssh_config takes them (\f[I]KEYWORD
-VALUE\f[R] or
+offers them, os, notes, aliases
+separated by spaces, ssh options one per
+line as ssh_config takes them
+(\f[I]KEYWORD VALUE\f[R] or
 \f[I]KEYWORD\f[R]=\f[I]VALUE\f[R]), and
 a box per module to exclude the host
 from.
@@ -1418,6 +1426,7 @@ inventory \f[B]defaults\f[R].
       \[dq]name\[dq]: \[dq]vault-01\[dq],
       \[dq]hostname\[dq]: \[dq]192.0.2.30\[dq],
       \[dq]aliases\[dq]: [\[dq]vault\[dq]],
+      \[dq]os\[dq]: \[dq]Rocky 10.1\[dq],
       \[dq]notes\[dq]: \[dq]secrets store\[dq],
       \[dq]groups\[dq]: [\[dq]zone_app\[dq], \[dq]no_auto_update\[dq]],
       \[dq]reasons\[dq]: {\[dq]no_auto_update\[dq]: \[dq]secrets\[dq]},
@@ -1465,6 +1474,15 @@ T{
 T}@T{
 Declared keys ssh offers, in order,
 instead of the default list
+T}
+T{
+\f[B]os\f[R]
+T}@T{
+What the host runs, written by hand, one
+line.
+Only \f[B]ari\f[R] reads it: no module
+exports it and \f[B]import\f[R] leaves
+it alone
 T}
 T{
 \f[B]notes\f[R]
@@ -1583,11 +1601,12 @@ any check fails, listing every problem
 at once: the name and aliases are valid
 ssh host names and unique across all
 inventories, the hostname has no spaces,
-the port is 1-65535, every key is
-declared and listed once, every group is
-declared, every reason is one its group
-declares, and each installed module
-accepts the host\[aq]s data.
+the port is 1-65535, os is one line,
+every key is declared and listed once,
+every group is declared, every reason is
+one its group declares, and each
+installed module accepts the host\[aq]s
+data.
 ssh options can\[aq]t repeat a keyword
 the host has a field for, like
 \f[B]User\f[R] or \f[B]Port\f[R].
