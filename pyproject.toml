@@ -1,6 +1,6 @@
 [project]
 name = "ari"
-version = "0.8.0"
+version = "0.9.0"
 description = "One record per SSH host; generates ssh config and Ansible inventory"
 readme = "README.md"
 authors = [{ name = "Thomas Lutkus", email = "thomas@lutkus.net" }]
