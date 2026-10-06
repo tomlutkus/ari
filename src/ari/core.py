@@ -395,6 +395,7 @@ def _removal_problems(inventory: Inventory, name: str) -> list[str]:
     return problems
 
 
+@storage.lock()
 def write_group(cfg: Config, inventory_name: str, name: str, c: GroupChanges) -> tuple[Inventory, str]:
     """Declare, change or remove one group. Returns the inventory and declared, updated, unchanged or
     removed. Nothing is saved if any check fails, and every problem is listed."""
@@ -589,36 +590,44 @@ def write_key(cfg: Config, inventory_name: str, name: str, c: KeyChanges) -> tup
     the inventory and declared, updated, unchanged or removed. Nothing is saved if any check
     fails, and every problem is listed. --new checks everything before ssh-keygen runs, so a
     refusal leaves no key behind, and saves nothing unless ssh-keygen leaves a pair."""
-    inventory = storage.load(cfg.get(inventory_name))
-    existing, key = _key_target(inventory, name, c)
+    with storage.lock():
+        inventory = storage.load(cfg.get(inventory_name))
+        existing, key = _key_target(inventory, name, c)
+        if key is not None and c.pub:
+            where = f"{inventory.name}: key {name!r}"
+            line, why = keyfiles.public_line(key.path)
+            if line is None:
+                hint = f"; ssh-keygen -p -f {key.path} rewrites it in OpenSSH format" if why == "pair unchecked" else ""
+                raise HostsError(f"{where}: no public half to read from {key.path} ({why}){hint}; nothing saved")
+            key.pub = line
+        if key is None or not c.new:
+            return _save_key(inventory, name, existing, key)
+    # ssh-keygen holds the terminal for as long as the passphrase prompt sits, so it runs without
+    # the lock, and the key is saved against the inventory as it is once it's done.
+    target = keyfiles.resolve(key.path)[0]
+    try:
+        code = keyfiles.generate(target, keyfiles.comment(name))
+    except FileNotFoundError:
+        raise HostsError("ssh-keygen isn't installed; nothing saved") from None
+    if code != 0:
+        raise HostsError(f"ssh-keygen exited {code}; nothing saved")
+    key.pub = keyfiles.pair_line(key.path)
+    if key.pub is None:
+        raise HostsError(f"ssh-keygen left no key pair at {key.path}; nothing saved")
+    with storage.lock():
+        inventory = storage.load(cfg.get(inventory_name))
+        existing = inventory.keys.get(name)
+        problems = _declaration_problems(inventory, name, key, f"{inventory.name}: key {name!r}")
+        if problems:
+            raise HostsError(f"generated {key.path}, but nothing saved:\n  " + "\n  ".join(problems))
+        return _save_key(inventory, name, existing, key)
+
+
+def _save_key(inventory: Inventory, name: str, existing: KeyDef | None, key: KeyDef | None) -> tuple[Inventory, str]:
     if key is None:
         del inventory.keys[name]
         storage.save(inventory)
         return inventory, "removed"
-    where = f"{inventory.name}: key {name!r}"
-    if c.new:
-        target = keyfiles.resolve(key.path)[0]
-        try:
-            code = keyfiles.generate(target, keyfiles.comment(name))
-        except FileNotFoundError:
-            raise HostsError("ssh-keygen isn't installed; nothing saved") from None
-        if code != 0:
-            raise HostsError(f"ssh-keygen exited {code}; nothing saved")
-        key.pub = keyfiles.pair_line(key.path)
-        if key.pub is None:
-            raise HostsError(f"ssh-keygen left no key pair at {key.path}; nothing saved")
-        # The passphrase prompt can sit for a while: save against the inventory as it is now.
-        inventory = storage.load(cfg.get(inventory_name))
-        existing = inventory.keys.get(name)
-        problems = _declaration_problems(inventory, name, key, where)
-        if problems:
-            raise HostsError(f"generated {key.path}, but nothing saved:\n  " + "\n  ".join(problems))
-    elif c.pub:
-        line, why = keyfiles.public_line(key.path)
-        if line is None:
-            hint = f"; ssh-keygen -p -f {key.path} rewrites it in OpenSSH format" if why == "pair unchecked" else ""
-            raise HostsError(f"{where}: no public half to read from {key.path} ({why}){hint}; nothing saved")
-        key.pub = line
     if existing == key:
         return inventory, "unchanged"
     inventory.keys[name] = key
@@ -789,6 +798,7 @@ def _adopt_keys(target: Inventory, keys: dict[str, KeyDef], hosts: list[Host], d
     return added
 
 
+@storage.lock()
 def import_hosts(
     cfg: Config, inventory_name: str, module_name: str, source: str | None = None, exclude: list[str] | None = None
 ) -> ImportReport:
@@ -1234,6 +1244,7 @@ def _write(inventories: dict[str, Inventory], inventory: Inventory, original: Ho
     return True
 
 
+@storage.lock()
 def add_host(cfg: Config, inventory_name: str, name: str, hostname: str, changes: Changes) -> tuple[Inventory, Host]:
     for flag, used in (("--rename", changes.rename), ("--hostname", changes.hostname)):
         if used is not None:
@@ -1247,6 +1258,7 @@ def add_host(cfg: Config, inventory_name: str, name: str, hostname: str, changes
     return inventory, host
 
 
+@storage.lock()
 def edit_host(cfg: Config, token: str, changes: Changes, scope: str | None = None) -> tuple[Inventory, Host, bool]:
     """The host after editing, and whether anything changed."""
     if changes.is_empty():
@@ -1258,6 +1270,7 @@ def edit_host(cfg: Config, token: str, changes: Changes, scope: str | None = Non
     return inventory, host, changed
 
 
+@storage.lock()
 def remove_host(cfg: Config, token: str, scope: str | None = None) -> tuple[Inventory, Host]:
     """Removing a host removes its group memberships with it: they live on the record."""
     inventories = load_all(cfg)
@@ -1315,6 +1328,7 @@ class ExportReport:
     notes: list[str] = field(default_factory=list)
 
 
+@storage.lock()
 def export(cfg: Config, scope: str | None = None, only: list[str] | None = None, force: bool = False) -> ExportReport:
     """Validate everything, check every target against the guard, then write. Any failure writes nothing."""
     for name in only or []:
@@ -1363,20 +1377,23 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
         ]
         raise _stopped(lines, "review the file, then rerun with --force")
 
-    # Every temp first, then every rename, then the guard. A failure while writing leaves every
-    # target and the guard as they were. Past that point, the guard records exactly what landed.
+    # Every temp first, the guard's state among them, then every rename, the guard's last. A
+    # failure while writing leaves every target and the guard as they were. Past that point, the
+    # guard records exactly what landed.
     staged = storage.Staged()
     writing = None
     try:
         for p, s in checked:
             if s is not Status.SAME:
-                writing = p
+                writing = p.path
                 staged.add(p.path, p.data, p.mode)
+        writing = guard.path
+        guard.stage(staged, [(p.path, p.data) for p in planned])
     except BaseException as e:
         staged.cleanup()
         if isinstance(e, OSError) and writing is not None:
-            where = Path(e.filename) if e.filename else writing.path
-            raise _stopped([f"{tilde(where)}: {e.strerror or e}"]) from None
+            temp = not e.filename or str(e.filename).endswith(storage.TEMP_SUFFIX)
+            raise _stopped([f"{tilde(writing if temp else Path(e.filename))}: {e.strerror or e}"]) from None
         raise
     try:
         for p, s in checked:
@@ -1387,7 +1404,10 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
                 staged.commit(p.path)
             guard.record(p.path, p.data)
             report.written.append(Written(p, s, fixed))
+        staged.commit(guard.path)
     finally:
-        staged.cleanup()
-        guard.save()
+        if guard.path in staged.temps:
+            # Stopped between two renames: the staged state would record files that never landed.
+            staged.cleanup()
+            guard.save()
     return report

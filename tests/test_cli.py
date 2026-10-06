@@ -69,7 +69,7 @@ def test_init_leaves_any_existing_config_alone(home, capsys):
     path = write_config(home, "not toml at all [")
     assert run("init") == 1
     assert path.read_text() == "not toml at all ["
-    assert not path.with_name("config.toml.tmp").exists()
+    assert sorted(p.name for p in path.parent.iterdir()) == ["config.toml"]
 
 
 def test_starter_examples_load_once_uncommented(home):

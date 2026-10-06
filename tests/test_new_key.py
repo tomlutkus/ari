@@ -31,6 +31,18 @@ args = sys.argv[1:]
 with open(os.environ["FAKE_KEYGEN_LOG"], "a") as log:
     log.write(json.dumps(args) + "\n")
 how = os.environ.get("FAKE_KEYGEN", "pair")
+if how == "lock":
+    # Whether another ari could write while the passphrase prompt sits.
+    import fcntl
+    fd = os.open(os.environ["FAKE_KEYGEN_LOCK"], os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        seen = "free"
+    except BlockingIOError:
+        seen = "held"
+    os.close(fd)
+    with open(os.environ["FAKE_KEYGEN_LOCK"] + ".seen", "w") as f:
+        f.write(seen)
 if how == "fail":
     sys.exit(1)
 path, note = args[args.index("-f") + 1], args[args.index("-C") + 1]
@@ -110,6 +122,16 @@ def test_new_generates_at_the_declared_path_and_fills_pub(home, keygen, capsys):
     assert pub.endswith(f" laptop {USER}@{HOST}")
     assert capsys.readouterr().out == "updated laptop (personal)\n"
     assert keyfiles.state("~/.ssh/laptop", pub) == ["ok"]
+
+
+def test_ssh_keygen_runs_without_the_write_lock(home, keygen, monkeypatch):
+    """The passphrase prompt can sit for a while; another ari can write meanwhile."""
+    lock = home / "state" / "ari" / "lock"
+    monkeypatch.setenv("FAKE_KEYGEN", "lock")
+    monkeypatch.setenv("FAKE_KEYGEN_LOCK", str(lock))
+    assert run("key", "fresh", "--path", "~/.ssh/fresh", "--new", "-i", "personal") == 0
+    assert lock.with_name("lock.seen").read_text() == "free"
+    assert keys(home)["fresh"]["pub"] == (home / "home" / ".ssh" / "fresh.pub").read_text().strip()
 
 
 def test_path_and_new_declare_and_generate_together(home, keygen, capsys):

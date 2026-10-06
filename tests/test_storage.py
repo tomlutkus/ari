@@ -26,7 +26,7 @@ def test_exclusive_write_never_replaces(tmp_path):
     with pytest.raises(FileExistsError):
         storage.atomic_write(path, b"second", exclusive=True)
     assert path.read_bytes() == b"first"
-    assert not (tmp_path / "config.toml.tmp").exists()
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def mode(path):
@@ -69,7 +69,7 @@ def test_round_trip_sorts_and_protects(tmp_path):
     storage.save(inventory)
     path = tmp_path / "personal.json"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert not (tmp_path / "personal.json.tmp").exists()
+    assert list(tmp_path.iterdir()) == [path]
     loaded = storage.load(ic(tmp_path))
     assert [h.name for h in loaded.hosts] == ["Alpha", "vps"]
     assert loaded.hosts[0].port == 2222

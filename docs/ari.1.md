@@ -224,7 +224,7 @@ With the **ansible** module, *SOURCE* is an inventory directory, and every **.ym
 
 ## export [*MODULE* ...]
 
-Write the output of every enabled module of every inventory, or only the named modules, or one inventory with **-i**. Validation and the guard check run first; if any fails, nothing is written. Every file is then written beside its target before any is renamed into place, so a write that fails, on a full disk say, leaves every file and the guard as they were. A file whose contents are already right is left alone, apart from its mode if that differs.
+Write the output of every enabled module of every inventory, or only the named modules, or one inventory with **-i**. Validation and the guard check run first; if any fails, nothing is written. Every file is then written beside its target, the guard's own state with them, before any is renamed into place, so a write that fails, on a full disk or in a state directory **ari** can't write, leaves every file and the guard as they were. A file whose contents are already right is left alone, apart from its mode if that differs.
 
 | Option | Meaning |
 |-------|-------------|
@@ -398,7 +398,7 @@ A file that fails to parse stops **ari** with the path and the error. It is neve
 
 Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, an **IdentityFile** for each of its keys in order, then **IdentitiesOnly yes** once when there is a key and the host doesn't set IdentitiesOnly itself, followed by the host's other options, one line for each value of a list. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
 
-Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file. The file gets mode 0600, as do the inventories, and a directory **ari** creates for them gets 0700.
+Every write goes to a new hidden file beside the target, `.FILE.` followed by eight hex digits and `.ari-tmp`, and is then renamed over it. **ari** creates that file and never opens one already there, so whatever sits beside the target, a file or a link, is left alone. `Include config.d/*.conf` never matches it, and Ansible skips hidden files in an inventory directory, so neither reads a half-written file. A crash can leave one behind, which is safe to delete. The file gets mode 0600, as do the inventories, and a directory **ari** creates for them gets 0700.
 
 # GENERATED ANSIBLE INVENTORY
 
@@ -442,8 +442,11 @@ A file holds what **ls -i** *NAME* **--format** prints for those columns: every 
 | `config.toml` | Inventories and their modules; **ari init** writes a starter |
 | `NAME.json` | Inventory data, one file per inventory |
 | `exports.json` | Hashes of exported files, for the guard |
+| `lock` | Held by every command that writes, so one writes at a time |
 
-`config.toml` and the inventories live in `~/.config/ari/`, and `exports.json` in `~/.local/state/ari/`. **XDG_CONFIG_HOME** and **XDG_STATE_HOME** move them. Losing the state file only means the guard refuses existing targets until the next import or **--force**.
+`config.toml` and the inventories live in `~/.config/ari/`, and `exports.json` and `lock` in `~/.local/state/ari/`. **XDG_CONFIG_HOME** and **XDG_STATE_HOME** move them. Losing the state file only means the guard refuses existing targets until the next import or **--force**.
+
+Every command that writes holds `lock` from reading what it will change until it has saved, so two never save over each other. One that finds it held waits up to five seconds, then stops with nothing changed. **ari key** *NAME* **--new** lets go of it while ssh-keygen asks for the passphrase. Commands that only read never wait for it: every file they read is whole, as it was before a write or after it.
 
 # ENVIRONMENT
 

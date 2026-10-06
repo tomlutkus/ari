@@ -304,7 +304,8 @@ def test_export_refuses_an_alias_that_is_the_hosts_own_name(imported, capsys):
 
 
 def generated(home):
-    return sorted(p for p in home.rglob("*") if p.is_file() and "config" not in p.parts)
+    """Every file export wrote, the guard's state included; not the lock, which any write leaves."""
+    return sorted(p for p in home.rglob("*") if p.is_file() and "config" not in p.parts and p.name != "lock")
 
 
 def snapshot(home):
@@ -340,16 +341,16 @@ def test_a_failed_write_changes_no_file_and_not_the_guard(home, monkeypatch, cap
     before, guard = snapshot(home), (home / "state" / "ari" / "exports.json").read_bytes()
     real = storage._write_temp
 
-    def full(tmp, data, mode):
-        if tmp.name == "00-hosts.yml.tmp":
-            raise OSError(errno.ENOSPC, "No space left on device", str(tmp))
-        real(tmp, data, mode)
+    def full(target, data, mode):
+        if target.name == "00-hosts.yml":
+            raise OSError(errno.ENOSPC, "No space left on device", str(target.with_name(f".x{storage.TEMP_SUFFIX}")))
+        return real(target, data, mode)
 
     monkeypatch.setattr(storage, "_write_temp", full)
     capsys.readouterr()
     assert run("export") == 1
     err = capsys.readouterr().err
-    assert "export stopped, nothing written" in err and "00-hosts.yml.tmp: No space left on device" in err
+    assert "export stopped, nothing written" in err and "ansible/00-hosts.yml: No space left on device" in err
     assert snapshot(home) == before
     assert (home / "state" / "ari" / "exports.json").read_bytes() == guard
     monkeypatch.setattr(storage, "_write_temp", real)
@@ -359,8 +360,8 @@ def test_a_failed_write_changes_no_file_and_not_the_guard(home, monkeypatch, cap
 def test_a_failed_write_removes_a_directory_it_made(home, monkeypatch):
     write_mixed(home)
 
-    def full(tmp, data, mode):
-        raise OSError(errno.EROFS, "Read-only file system", str(tmp))
+    def full(target, data, mode):
+        raise OSError(errno.EROFS, "Read-only file system", str(target))
 
     monkeypatch.setattr(storage, "_write_temp", full)
     assert run("export") == 1
@@ -383,7 +384,7 @@ def test_a_failed_rename_leaves_the_guard_matching_what_landed(home, monkeypatch
     monkeypatch.setattr(storage.Staged, "commit", commit)
     with pytest.raises(OSError):
         run("export")
-    assert not [p for p in generated(home) if p.name.endswith(".tmp")]
+    assert not [p for p in generated(home) if p.name.endswith(storage.TEMP_SUFFIX)]
     monkeypatch.setattr(storage.Staged, "commit", real)
     capsys.readouterr()
     assert run("export") == 0

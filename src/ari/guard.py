@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .errors import HostsError
 from .paths import state_dir, tilde
-from .storage import atomic_write
+from .storage import Staged, atomic_write
 
 
 class Status(Enum):
@@ -28,6 +28,10 @@ def _key(path: Path) -> str:
 
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _encode(hashes: dict[str, str]) -> bytes:
+    return (json.dumps(hashes, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 class Guard:
@@ -57,6 +61,12 @@ class Guard:
     def record(self, path: Path, data: bytes) -> None:
         self.hashes[_key(path)] = digest(data)
 
+    def stage(self, staged: Staged, files: list[tuple[Path, bytes]]) -> None:
+        """Write the state as it will be once files have landed, beside the files themselves, so
+        a state file that can't be written stops an export before anything is renamed. Commit it
+        after the last of them."""
+        hashes = {**self.hashes, **{_key(path): digest(data) for path, data in files}}
+        staged.add(self.path, _encode(hashes), 0o600)
+
     def save(self) -> None:
-        text = json.dumps(self.hashes, indent=2, sort_keys=True) + "\n"
-        atomic_write(self.path, text.encode("utf-8"))
+        atomic_write(self.path, _encode(self.hashes))
