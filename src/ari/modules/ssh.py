@@ -2,7 +2,6 @@
 
 import copy
 import re
-import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,15 +11,23 @@ from ..models import Host, Inventory, KeyDef, check_port, declare_key
 from ..paths import tilde
 from . import ImportResult, Module, Output
 
-_KEYWORD = re.compile(r"^(\w+)\s*(?:=\s*|\s+)(.*)$")
+# A keyword, then what ssh's strdelim skips after it: whitespace, or one = with whitespace around it.
+_KEYWORD = re.compile(r"([^ \t\r\n\"=]+)(?:(?:[ \t\r\n]*=|[ \t\r\n])[ \t\r\n]*(.*))?", re.S)
 _PATTERN_CHARS = set("*?!")
+
+# Commands ssh takes as the rest of the line, quotes and any # included, for a shell to read.
+_WHOLE = {"proxycommand", "localcommand", "remotecommand", "knownhostscommand"}
+
+# Keywords that take exactly one value; more is an error that stops ssh reading the file.
+_ONE = {"hostname", "user", "port", "identityfile"}
 
 
 @dataclass
 class Block:
     tokens: list[str]
     line: int
-    options: list[tuple[str, str]] = field(default_factory=list)
+    # Each line as (keyword, its value as stored, its values as ssh splits them).
+    options: list[tuple[str, str, list[str]]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -28,17 +35,57 @@ class Settings:
     path: Path
 
 
-def _split(value: str) -> list[str] | None:
-    try:
-        return shlex.split(value)
-    except ValueError:
-        return None
+def _args(text: str) -> tuple[list[str], int] | None:
+    """The values on a line as OpenSSH's argv_split reads them, and where they end: at the end of
+    text, or at a # that starts a value, which comments out the rest. Only space and tab separate
+    values. Double and single quotes group, and a value runs on after a closing quote. A backslash
+    goes only before a quote, another backslash, or a space outside quotes; anywhere else it stays.
+    None when a quote never closes, which ssh refuses."""
+    tokens: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in " \t":
+            i += 1
+            continue
+        if text[i] == "#":
+            break
+        quote, token = "", []
+        while i < n:
+            ch = text[i]
+            following = text[i + 1] if i + 1 < n else ""
+            if ch == "\\" and following and (following in "'\"\\" or (not quote and following == " ")):
+                token.append(following)
+                i += 1
+            elif not quote and ch in " \t":
+                break
+            elif not quote and ch in "\"'":
+                quote = ch
+            elif quote and ch == quote:
+                quote = ""
+            else:
+                token.append(ch)
+            i += 1
+        if quote:
+            return None
+        tokens.append("".join(token))
+    return tokens, i
 
 
-def _single(value: str) -> str:
-    """A one-argument value with ssh-style quoting removed."""
-    parts = _split(value)
-    return parts[0] if parts and len(parts) == 1 else value
+def _value(keyword: str, rest: str, args: list[str], end: int) -> tuple[str | None, str]:
+    """What a line's keyword gets, as the record stores it, or None and why ssh refuses the line.
+    The commands ssh takes whole keep the rest of the line; ProxyJump keeps it up to its first #, as
+    ssh cuts it; a field takes its one value; any other option keeps its text up to a comment, quotes
+    and all, so it's written back as ssh read it."""
+    if keyword in _WHOLE or keyword == "proxyjump":
+        value = rest.lstrip(" \t\r\n=")
+        if keyword == "proxyjump":
+            value = value.partition("#")[0].rstrip(" \t")
+        return (value, "") if value else (None, "no value")
+    if not args or (keyword in _ONE and not args[0]):
+        return None, "no value"
+    if keyword in _ONE:
+        return (args[0], "") if len(args) == 1 else (None, "more than one value")
+    return rest[:end].rstrip(" \t"), ""
 
 
 def _quote(value: str) -> str:
@@ -108,33 +155,49 @@ def options(inventory: Inventory, host: Host) -> dict[str, Value]:
 
 
 def parse(text: str, source: str) -> tuple[list[Block], list[str]]:
-    """Host blocks that name concrete hosts, plus warnings for everything skipped."""
+    """Host blocks that name concrete hosts, plus warnings for everything skipped. Lines are read
+    the way ssh reads them: one ends only at \\n, or at a NUL, and its trailing whitespace goes. A
+    line ssh refuses stops ssh reading the whole file, so it's skipped and warned about."""
     blocks: list[Block] = []
     warnings: list[str] = []
     current: Block | None = None
     skipping = False
 
-    for n, raw in enumerate(text.splitlines(), 1):
-        line = raw.strip()
+    for n, raw in enumerate(text.split("\n"), 1):
+        line = raw.partition("\0")[0].rstrip(" \t\r\n\f").lstrip(" \t\r\n")
         if not line or line.startswith("#"):
             continue
-        match = _KEYWORD.match(line)
+        match = _KEYWORD.fullmatch(line)
         if not match:
             warnings.append(f"{source}:{n}: can't read {line!r}, skipped")
             continue
-        keyword, value = match.group(1), match.group(2).strip()
+        keyword, rest = match.group(1), match.group(2) or ""
         lowered = keyword.lower()
+        parsed = _args(rest)
+        args, end = parsed if parsed is not None else ([], 0)
+        if not rest:
+            value, why = None, "no value"
+        elif parsed is None:
+            value, why = None, "an unclosed quote"
+        elif lowered == "host":
+            value, why = (None, "an empty name") if "" in args else (rest, "")
+        else:
+            value, why = _value(lowered, rest, args, end)
+        refused = f"{source}:{n}: ssh refuses this line ({why}), and with it the whole file"
 
         if lowered == "host":
-            tokens = _split(value)
-            if not tokens:
-                warnings.append(f"{source}:{n}: unreadable Host line, block skipped")
+            if value is None:
+                warnings.append(f"{refused}; block skipped")
                 current, skipping = None, True
-            elif any(set(t) & _PATTERN_CHARS for t in tokens):
-                warnings.append(f"{source}:{n}: Host {value} is a pattern, not a host; block skipped")
+            elif not args:
+                # Only a comment: ssh starts a block that matches nothing.
+                warnings.append(f"{source}:{n}: Host line names no host; block skipped")
+                current, skipping = None, True
+            elif any(set(t) & _PATTERN_CHARS for t in args):
+                warnings.append(f"{source}:{n}: Host {' '.join(args)} is a pattern, not a host; block skipped")
                 current, skipping = None, True
             else:
-                current, skipping = Block(tokens, n), False
+                current, skipping = Block(args, n), False
                 blocks.append(current)
         elif lowered == "match":
             warnings.append(f"{source}:{n}: Match blocks can't be imported; block skipped")
@@ -143,10 +206,12 @@ def parse(text: str, source: str) -> tuple[list[Block], list[str]]:
             warnings.append(f"{source}:{n}: Include not followed; import that file on its own")
         elif skipping:
             continue
+        elif value is None:
+            warnings.append(f"{refused}; skipped")
         elif current is None:
             warnings.append(f"{source}:{n}: {keyword} outside any Host block, skipped")
         else:
-            current.options.append((keyword, value))
+            current.options.append((keyword, value, args))
 
     return blocks, warnings
 
@@ -183,10 +248,10 @@ def to_hosts(
     extra: dict[str, Value] = {}
     listed: dict[str, str] = {}  # an accumulating keyword's first spelling, which its list goes under
 
-    for keyword, value in block.options:
+    for keyword, value, _ in block.options:
         lowered = keyword.lower()
         if lowered == "identityfile":
-            name = declare_key(keys, _single(value))
+            name = declare_key(keys, value)
             if name in host.keys:
                 warnings.append(f"{where}: IdentityFile {value} given twice; kept once")
             else:
@@ -203,12 +268,12 @@ def to_hosts(
         seen.add(lowered)
         match lowered:
             case "hostname":
-                host.hostname = _single(value)
+                host.hostname = value
             case "user":
-                host.user = _single(value)
+                host.user = value
             case "port":
                 try:
-                    host.port = check_port(int(_single(value)), where)
+                    host.port = check_port(int(value), where)
                 except (ValueError, HostsError):
                     message = f"{where}: Port {value!r} is not a port number; host skipped"
                     warnings.append(message)

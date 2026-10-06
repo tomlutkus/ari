@@ -967,6 +967,31 @@ With the \f[B]ssh\f[R] module,
 \f[I]SOURCE\f[R] is a config file.
 The first token on a Host line becomes
 the name and the rest become aliases.
+Every line is read the way ssh reads it:
+a line ends only at a newline, values
+split at spaces and tabs, quotes group
+and come off, a backslash goes only
+before a quote, another backslash or a
+space outside quotes, and a \f[V]#\f[R]
+that starts a value comments out the
+rest.
+\f[B]ProxyCommand\f[R],
+\f[B]LocalCommand\f[R],
+\f[B]RemoteCommand\f[R] and
+\f[B]KnownHostsCommand\f[R] keep the
+whole rest of the line, as ssh hands it
+to a shell, \f[B]ProxyJump\f[R] keeps it
+up to its first \f[V]#\f[R], where ssh
+cuts it, and other options keep their
+text up to a comment, quotes included.
+A line ssh refuses, with an unclosed
+quote, no value, or more than one value
+for \f[B]HostName\f[R], \f[B]User\f[R],
+\f[B]Port\f[R] or
+\f[B]IdentityFile\f[R], stops ssh
+reading the whole file, so import skips
+it with a warning and doesn\[aq]t adopt
+the file.
 A block without \f[B]HostName\f[R] is
 read the way ssh reads it, which
 connects to whichever token was typed:
