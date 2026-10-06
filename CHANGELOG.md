@@ -2,6 +2,10 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
+## Unreleased
+
+- ansible import reads `ansible_ssh_private_key_file` as what it is, a host's first key, and agrees with a record whose keys start with that file. Re-importing what export wrote for a host with several keys, its own or the defaults', was a conflict, `IdentityFile ~/.ssh/one differs from ~/.ssh/one, ~/.ssh/two`, that kept the files from being adopted, and several default keys also drew a warning that the source's defaults differed. A new host naming the first of the defaults' keys now takes their whole list instead of that one key. A first key that differs is still a conflict.
+
 ## 0.9.0 (2026-10-06)
 
 - Each host can say what it runs: `os`, written by hand, one line. `add` and `edit` set it with `--os 'Ubuntu 24.04'` and `edit --os ''` clears it; the TUI's form has a field for it. `show` and the TUI's details print it, and `ls --search` and the TUI filter match it. No module exports it and import leaves it alone, so every generated file stays the same. The inventory format stays version 3, and a host without `os` stores nothing for it; ari 0.8 refuses a file in which any host has one.

@@ -435,6 +435,76 @@ def test_a_source_default_that_would_change_a_host_conflicts(home, tmp_path, cap
     assert "user" not in record(home, "old")
 
 
+# Several keys: Ansible names only the first
+
+
+SEVERAL = {
+    "version": 3,
+    "defaults": {"keys": ["lab", "spare"]},
+    "keys": {"lab": {"path": "~/.ssh/lab"}, "spare": {"path": "~/.ssh/spare"}, "extra": {"path": "~/.ssh/extra"}},
+    "hosts": [
+        {"name": "both", "hostname": "192.0.2.1"},
+        {"name": "lab-first", "hostname": "192.0.2.2", "keys": ["lab", "extra"]},
+        {"name": "lab-only", "hostname": "192.0.2.3", "keys": ["lab"]},
+        {"name": "extra-first", "hostname": "192.0.2.4", "keys": ["extra", "lab"]},
+    ],
+}
+
+
+def several(home, hosts=None):
+    """A work inventory whose defaults and hosts list several keys, with ansible on and no zones."""
+    write_config(home, '[inventories.work.ansible]\ndir = "SSH/ansible"\n')
+    work_json(home).write_text(json.dumps({**SEVERAL, "hosts": SEVERAL["hosts"] if hosts is None else hosts}))
+
+
+def test_reimporting_hosts_with_several_keys_is_unchanged(home, capsys):
+    several(home)
+    assert run("export") == 0
+    hosts_file = (home / "ssh" / "ansible" / "00-hosts.yml").read_text()
+    assert "ansible_ssh_private_key_file: ~/.ssh/lab\n" in hosts_file
+    assert hosts_file.count("ansible_ssh_private_key_file") == 2  # all.vars and extra-first
+    before = work_json(home).read_bytes()
+    capsys.readouterr()
+    assert run("-i", "work", "import", "ansible", str(home / "ssh" / "ansible")) == 0
+    out = capsys.readouterr()
+    assert out.out == "work: 4 unchanged (both, lab-first, lab-only, extra-first)\n"
+    assert out.err == ""
+    assert work_json(home).read_bytes() == before
+
+
+def test_a_new_host_naming_the_defaults_first_key_takes_their_whole_list(home, tmp_path, capsys):
+    several(home, hosts=[{"name": "old", "hostname": "192.0.2.1"}])
+    source = hosts_yml(tmp_path, "all:\n  vars:\n    ansible_ssh_private_key_file: ~/.ssh/lab\n  hosts:\n"
+                       "    a:\n      ansible_host: 192.0.2.10\n"
+                       "    b:\n      ansible_host: 192.0.2.11\n      ansible_ssh_private_key_file: ~/.ssh/lab\n"
+                       "    c:\n      ansible_host: 192.0.2.12\n      ansible_ssh_private_key_file: ~/.ssh/extra\n")
+    assert run("-i", "work", "import", "ansible", source) == 0
+    out = capsys.readouterr()
+    assert "differ" not in out.err and "pinned" not in out.err
+    assert "keys" not in record(home, "a") and "keys" not in record(home, "b")
+    assert record(home, "c")["keys"] == ["extra"]
+
+
+@pytest.mark.parametrize(
+    "vars_key, host_key, message",
+    [
+        ("~/.ssh/spare", "", "both: IdentityFile ~/.ssh/spare differs from ~/.ssh/lab, ~/.ssh/spare"),
+        ("~/.ssh/lab", "~/.ssh/extra", "lab-only: IdentityFile ~/.ssh/extra differs from ~/.ssh/lab"),
+        ("~/.ssh/lab", "~/.ssh/lab", "extra-first: IdentityFile ~/.ssh/lab differs from ~/.ssh/extra, ~/.ssh/lab"),
+    ],
+)
+def test_a_first_key_that_differs_still_conflicts(home, tmp_path, capsys, vars_key, host_key, message):
+    several(home)
+    name = message.split(":")[0]
+    host_vars = f"      ansible_ssh_private_key_file: {host_key}\n" if host_key else ""
+    source = hosts_yml(tmp_path, f"all:\n  vars:\n    ansible_ssh_private_key_file: {vars_key}\n  hosts:\n"
+                       f"    {name}:\n      ansible_host: {record(home, name)['hostname']}\n{host_vars}")
+    before = work_json(home).read_bytes()
+    assert run("-i", "work", "import", "ansible", source) == 1
+    assert f"conflict: {message}; not merged" in capsys.readouterr().err
+    assert work_json(home).read_bytes() == before
+
+
 @pytest.mark.parametrize("value", ["no", "10", ""])
 def test_ansible_host_that_isnt_a_string_skips_the_host(tmp_path, value):
     source = hosts_yml(tmp_path, f"all:\n  hosts:\n    a:\n      ansible_host: {value}\n    b:\n      ansible_host: 192.0.2.2\n")

@@ -51,6 +51,9 @@ class ImportResult:
     # gives a block's settings only to the tokens on its Host line, exactly as typed. A host
     # already in the inventory takes changes only from a block naming every token it has.
     covers: list[set[str]] | None = None
+    # The source names only each host's first key, as Ansible's one key file does. A record whose
+    # key list starts with that key agrees with it.
+    first_key_only: bool = False
 
 
 class Module:

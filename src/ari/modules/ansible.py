@@ -428,6 +428,7 @@ class _Reader:
             settings,
             self.lossy,
             keys=self.keys,
+            first_key_only=True,
         )
 
 

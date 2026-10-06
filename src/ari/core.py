@@ -688,7 +688,15 @@ def _strip_defaults(inventory: Inventory, host: Host) -> None:
     host.modules = {name: data for name, data in host.modules.items() if data}
 
 
-def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | None:
+def _same_keys(stated: list[str], keys: list[str], first_only: bool) -> bool:
+    """Whether the key files a source states agree with a record's. A source that names only the
+    first key agrees with any list that starts with it."""
+    if first_only and stated:
+        return stated == keys[: len(stated)]
+    return stated == keys
+
+
+def _difference(inventory: Inventory, existing: Host, incoming: Host, first_only: bool = False) -> str | None:
     """What the source sets differently from the record. Merge only fills gaps, so anything
     returned here would otherwise be dropped while the report said nothing. A field the source
     leaves unset, an empty hostname, no port or no notes, says nothing either way."""
@@ -700,7 +708,7 @@ def _difference(inventory: Inventory, existing: Host, incoming: Host) -> str | N
     if incoming.port and incoming.port != inventory.port(existing):
         return f"Port {incoming.port} differs from {inventory.port(existing)}"
     stated, keys = inventory.key_paths(incoming.keys), inventory.identity_files(existing)
-    if stated and keys and stated != keys:
+    if stated and keys and not _same_keys(stated, keys, first_only):
         return f"IdentityFile {', '.join(stated)} differs from {', '.join(keys)}"
     if incoming.notes and existing.notes and incoming.notes != existing.notes:
         return f"notes {incoming.notes!r} differ from {existing.notes!r}"
@@ -814,7 +822,9 @@ def import_hosts(
             mine = target.defaults
             ours = {"user": mine.user, "port": mine.port or 22, "keys": target.key_paths(mine.keys)}
             theirs = {"user": d.user, "port": d.port, "keys": target.key_paths(d.keys)}
-            differ = (d.user, d.port, theirs["keys"]) != (mine.user, mine.port, ours["keys"])
+            differs = {attr: theirs[attr] != ours[attr] for attr in ("user", "port")}
+            differs["keys"] = not _same_keys(theirs["keys"], ours["keys"], result.first_key_only)
+            differ = (d.user, d.port) != (mine.user, mine.port) or differs["keys"]
             for host in result.hosts:
                 for attr, value, unset in (
                     ("user", d.user, host.user is None),
@@ -823,7 +833,7 @@ def import_hosts(
                 ):
                     if value is not None and unset:
                         setattr(host, attr, value)
-                        if theirs[attr] != ours[attr]:
+                        if differs[attr]:
                             leaning.add(host.name)
     elif fresh:
         report.defaults_set = _infer_defaults(target, result.hosts)
@@ -876,6 +886,9 @@ def import_hosts(
             inherits_user = result.defaults is None and host.user is None and target.defaults.user
             inherits_key = result.defaults is None and not host.keys and target.defaults.keys
             module.complete(host)
+            default_keys = target.key_paths(target.defaults.keys)
+            if result.first_key_only and host.keys and _same_keys(target.key_paths(host.keys), default_keys, True):
+                host.keys = []  # the source names the defaults' first key, so the host takes their whole list
             _strip_defaults(target, host)
             host.exclude = list(exclude)
             # Checked against everything already in the inventory, hosts added earlier in this
@@ -892,7 +905,7 @@ def import_hosts(
             target.hosts.append(host)
             report.added.append(host.name)
             continue
-        difference = _difference(target, existing, host)
+        difference = _difference(target, existing, host, result.first_key_only)
         if difference:
             report.conflicts.append(f"{host.name}: {difference}; not merged")
             continue

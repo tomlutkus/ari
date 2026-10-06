@@ -1042,6 +1042,14 @@ each reported.
 A quoted \f[B]ansible_port\f[R] such as
 \f[V]\[dq]2222\[dq]\f[R] is the number,
 as Ansible reads it.
+\f[B]ansible_ssh_private_key_file\f[R]
+names only a host\[aq]s first key, so it
+agrees with a record whose keys start
+with that file: re-importing what export
+wrote for a host with several keys
+changes nothing, and a new host naming
+the first of the defaults\[aq] keys
+takes their whole list.
 Anything else is reported as not
 imported: other vars, group vars, and
 members that no hosts section defines.
