@@ -4,15 +4,15 @@ the table module writes the same bytes. Values are the ones that take effect."""
 import csv
 import getpass
 import io
-import json
 import re
 
 import pytest
 from rich.cells import cell_len
 from rich.console import Console
 
-from conftest import FIXTURES, MIXED, write_config
+from conftest import FIXTURES, write_listed
 from ari import cli, core
+from ari.columns import COLUMNS
 from ari.cli import main
 from ari.config import load_config
 
@@ -25,38 +25,7 @@ def run(*argv):
 
 @pytest.fixture
 def listed(home):
-    """Two inventories with a value for every column: personal sets no user anywhere, a note runs
-    to two lines with a pipe and quotes in it, and one host lists keys of its own."""
-    write_config(home, MIXED)
-    root = home / "config" / "ari"
-    (root / "personal.json").write_text(json.dumps({
-        "version": 3,
-        "defaults": {"keys": ["home"]},
-        "keys": {"home": {"path": "~/.ssh/home"}},
-        "hosts": [
-            {"name": "nas", "hostname": "192.0.2.254", "aliases": ["storage"], "os": "TrueNAS 25.04",
-             "notes": "basement NAS"},
-            {"name": "pi", "hostname": "192.0.2.50", "user": "pi", "port": 2200, "os": "Raspberry Pi OS 12",
-             "notes": 'two lines\nthe second | with a pipe, "quoted"'},
-            {"name": "scratch", "hostname": "192.0.2.77", "exclude": ["ssh"]},
-        ],
-    }))
-    (root / "work.json").write_text(json.dumps({
-        "version": 3,
-        "defaults": {"user": "deploy", "port": 2222, "keys": ["lab"]},
-        "keys": {"lab": {"path": "~/.ssh/lab"}, "old": {"path": "~/.ssh/old"}},
-        "groups": {
-            "zone_app": {"description": "app subnet (192.0.2.0/25)"},
-            "no_auto_update": {"reasons": {"secrets": "secrets and prod path"}},
-        },
-        "hosts": [
-            {"name": "fw", "hostname": "203.0.113.1", "keys": ["old", "lab"], "exclude": ["ansible"]},
-            {"name": "vault-01", "hostname": "192.0.2.30", "os": "Rocky 10.1", "groups": ["zone_app", "no_auto_update"],
-             "reasons": {"no_auto_update": "secrets"}},
-            {"name": "web-01", "hostname": "192.0.2.10", "aliases": ["www", "192.0.2.10"], "user": "admin", "port": 22,
-             "groups": ["zone_app"], "notes": "front door"},
-        ],
-    }))
+    write_listed(home)
     return home
 
 
@@ -66,10 +35,10 @@ def printed(capsys, *argv) -> str:
 
 
 def test_the_registry_names_each_column_and_heads_it_in_capitals():
-    assert list(core.COLUMNS) == [
+    assert list(COLUMNS) == [
         "name", "hostname", "aliases", "user", "port", "keys", "os", "notes", "groups", "exclude", "inv"
     ]
-    assert all(c.heading == c.name.upper() for c in core.COLUMNS.values())
+    assert all(c.heading == c.name.upper() for c in COLUMNS.values())
 
 
 @pytest.mark.parametrize("form, fixture", [("md", "ls.md"), ("csv", "ls.csv")])

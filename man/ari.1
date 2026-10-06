@@ -1415,6 +1415,10 @@ zones = \[dq]zone_*\[dq]
 \[dq]10-zones.yml\[dq] = [\[dq]zone_*\[dq]]
 \[dq]40-roles.yml\[dq] = [\[dq]role_*\[dq], \[dq]do_not_touch\[dq]]
 \[dq]70-lifecycle.yml\[dq] = [\[dq]lifecycle_*\[dq], \[dq]no_auto_update\[dq]]
+
+[[inventories.work.table.outputs]]
+path = \[dq]\[ti]/work/infra/docs/hosts.md\[dq]
+columns = [\[dq]name\[dq], \[dq]hostname\[dq], \[dq]os\[dq], \[dq]groups\[dq], \[dq]notes\[dq]]
 \f[R]
 .fi
 .PP
@@ -1484,6 +1488,14 @@ T}@T{
 Each group file, with the globs of the
 groups it holds
 T}
+T{
+\f[V]inventories.NAME.table.outputs\f[R]
+T}@T{
+Each table to write, with its
+\f[B]path\f[R] and \f[B]columns\f[R],
+and optionally \f[B]format\f[R] and
+\f[B]mode\f[R]; see GENERATED TABLES
+T}
 .TE
 .PP
 A table for a module that isn\[aq]t
@@ -1514,9 +1526,9 @@ A host that lists a module in
 .PP
 Modules are found through the Python
 entry point group \f[B]ari.modules\f[R].
-The built-in \f[B]ssh\f[R] and
-\f[B]ansible\f[R] modules register there
-like any other.
+The built-in \f[B]ssh\f[R],
+\f[B]ansible\f[R] and \f[B]table\f[R]
+modules register there like any other.
 A third-party module is a package that
 registers in that group; install it into
 ari\[aq]s environment with \f[B]uv tool
@@ -1842,6 +1854,76 @@ read them, and a directory \f[B]ari\f[R]
 creates for them gets 0755.
 A directory that already exists keeps
 its mode.
+.SH GENERATED TABLES
+.PP
+The \f[B]table\f[R] module writes an
+inventory\[aq]s hosts as tables, one
+file for each entry under
+\f[V]outputs\f[R], with the columns that
+entry names.
+It only exports: nothing reads a table
+back.
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+Key
+T}@T{
+Meaning
+T}
+_
+T{
+\f[B]path\f[R]
+T}@T{
+The file to write; absolute or starting
+with \f[B]\[ti]\f[R]
+T}
+T{
+\f[B]columns\f[R]
+T}@T{
+The columns, in order, from those
+\f[B]ls --columns\f[R] takes: name,
+hostname, aliases, user, port, keys, os,
+notes, groups, exclude and inv.
+A module\[aq]s column isn\[aq]t one,
+since it says what export writes rather
+than what the record holds
+T}
+T{
+\f[B]format\f[R]
+T}@T{
+\f[B]md\f[R] or \f[B]csv\f[R]; needed
+only when the path ends in neither
+\f[V].md\f[R] nor \f[V].csv\f[R]
+T}
+T{
+\f[B]mode\f[R]
+T}@T{
+The file\[aq]s mode, as an octal string
+you can read and write; defaults to
+\f[B]\[dq]0644\[dq]\f[R]
+T}
+.TE
+.PP
+A file holds what \f[B]ls -i\f[R]
+\f[I]NAME\f[R] \f[B]--format\f[R] prints
+for those columns: every value whole, as
+it takes effect, hosts in the order the
+inventory saves them.
+A Markdown file opens with a comment
+naming the inventory it comes from, then
+a blank line; a CSV file has no such
+line, since it would read as a row.
+A host that lists \f[B]table\f[R] in
+\f[B]exclude\f[R] stays out of every
+table of its inventory.
+Nothing in a table depends on the time
+or the machine, so an export with
+nothing changed reports every table
+unchanged, and the guard refuses a hand
+edit until \f[B]export --force\f[R], as
+for any generated file.
 .SH FILES
 .PP
 .TS

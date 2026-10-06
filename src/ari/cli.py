@@ -14,6 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import __version__, core, keyfiles
+from .columns import COLUMNS, Column, csv_table, markdown_table
 from .config import Config, load_config
 from .errors import HostsError
 from .paths import tilde
@@ -83,7 +84,7 @@ def _mark(cfg: Config, inventory, host, module: str) -> Text:
 _FLEXIBLE = {"aliases", "keys", "groups", "exclude", "notes"}
 
 
-def _shown(column: core.Column, inventory, host) -> str:
+def _shown(column: Column, inventory, host) -> str:
     """The whole text a flexible column would show for a host."""
     value = column.value(inventory, host)
     if isinstance(value, list):
@@ -91,8 +92,8 @@ def _shown(column: core.Column, inventory, host) -> str:
     return (value.splitlines() or [""])[0] or "-"
 
 
-def _ls_cell(cfg: Config, column: core.Column, inventory, host, width: int | None) -> Text:
-    if column.name not in core.COLUMNS:
+def _ls_cell(cfg: Config, column: Column, inventory, host, width: int | None) -> Text:
+    if column.name not in COLUMNS:
         return _mark(cfg, inventory, host, column.name)
     if column.name == "user":
         return _user(inventory, host)
@@ -110,7 +111,7 @@ def _ls_cell(cfg: Config, column: core.Column, inventory, host, width: int | Non
     return text
 
 
-def _ls_table(cfg: Config, columns: list[core.Column], rows: list, widths: dict[str, int]) -> Table:
+def _ls_table(cfg: Config, columns: list[Column], rows: list, widths: dict[str, int]) -> Table:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
     for column in columns:
         table.add_column(column.heading, justify="right" if column.name == "port" else "left", no_wrap=column.name in _FLEXIBLE)
@@ -119,7 +120,7 @@ def _ls_table(cfg: Config, columns: list[core.Column], rows: list, widths: dict[
     return table
 
 
-def _print_hosts(cfg: Config, columns: list[core.Column], rows: list) -> None:
+def _print_hosts(cfg: Config, columns: list[Column], rows: list) -> None:
     """The flexible columns share what the others leave, the widest giving way first, down to
     their headings, so a row never wraps on their account."""
     flexible = [c for c in columns if c.name in _FLEXIBLE]
@@ -138,7 +139,7 @@ def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
     columns = core.ls_columns(cfg, _inventory_arg(args), names)
     rows = core.list_hosts(cfg, _inventory_arg(args), args.search, args.group)
     if args.format:
-        sys.stdout.write((core.markdown_table if args.format == "md" else core.csv_table)(columns, rows))
+        sys.stdout.write((markdown_table if args.format == "md" else csv_table)(columns, rows))
         return 0
     if not rows:
         out.print("no hosts")
@@ -473,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
     ls.add_argument(
         "--columns",
         metavar="NAME,...",
-        help=f"these columns, in this order: {', '.join(core.COLUMNS)}, or an exporting module's name",
+        help=f"these columns, in this order: {', '.join(COLUMNS)}, or an exporting module's name",
     )
     ls.add_argument("--format", choices=("md", "csv"), help="print a Markdown table or CSV instead")
     ls.set_defaults(func=cmd_ls)

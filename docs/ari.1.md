@@ -293,6 +293,10 @@ zones = "zone_*"
 "10-zones.yml" = ["zone_*"]
 "40-roles.yml" = ["role_*", "do_not_touch"]
 "70-lifecycle.yml" = ["lifecycle_*", "no_auto_update"]
+
+[[inventories.work.table.outputs]]
+path = "~/work/infra/docs/hosts.md"
+columns = ["name", "hostname", "os", "groups", "notes"]
 ```
 
 | Key | Meaning |
@@ -306,6 +310,7 @@ zones = "zone_*"
 | `inventories.NAME.ansible.hosts` | Hosts file in that directory; defaults to `00-hosts.yml` |
 | `inventories.NAME.ansible.zones` | Glob, or list of globs, naming the zone groups |
 | `inventories.NAME.ansible.groups` | Each group file, with the globs of the groups it holds |
+| `inventories.NAME.table.outputs` | Each table to write, with its **path** and **columns**, and optionally **format** and **mode**; see GENERATED TABLES |
 
 A table for a module that isn't installed is an error, unless it says **enabled = false**.
 
@@ -319,7 +324,7 @@ Include config.d/*.conf
 
 A module turns an inventory into files, reads a source into hosts, or both. Modules never write to disk themselves: they hand **ari** paths and contents, and **ari** does the writing, so the guard, the atomic writes and the all-or-nothing validation cover every module the same way. A host that lists a module in **exclude** never reaches it.
 
-Modules are found through the Python entry point group **ari.modules**. The built-in **ssh** and **ansible** modules register there like any other. A third-party module is a package that registers in that group; install it into ari's environment with **uv tool install ari --with** *PACKAGE*.
+Modules are found through the Python entry point group **ari.modules**. The built-in **ssh**, **ansible** and **table** modules register there like any other. A third-party module is a package that registers in that group; install it into ari's environment with **uv tool install ari --with** *PACKAGE*.
 
 # INVENTORY FILES
 
@@ -403,6 +408,19 @@ Each file in the **groups** table holds the groups its globs match, in declarati
 Values are written plain when YAML reads them back unchanged, and double-quoted otherwise. The same inventory always produces the same bytes, so a diff of the generated files shows only real changes. Files in the directory that the **groups** table doesn't name are never touched.
 
 The files get mode 0644, so anyone who runs playbooks from the repository can read them, and a directory **ari** creates for them gets 0755. A directory that already exists keeps its mode.
+
+# GENERATED TABLES
+
+The **table** module writes an inventory's hosts as tables, one file for each entry under `outputs`, with the columns that entry names. It only exports: nothing reads a table back.
+
+| Key | Meaning |
+|-------|-------------|
+| **path** | The file to write; absolute or starting with **~** |
+| **columns** | The columns, in order, from those **ls --columns** takes: name, hostname, aliases, user, port, keys, os, notes, groups, exclude and inv. A module's column isn't one, since it says what export writes rather than what the record holds |
+| **format** | **md** or **csv**; needed only when the path ends in neither `.md` nor `.csv` |
+| **mode** | The file's mode, as an octal string you can read and write; defaults to **"0644"** |
+
+A file holds what **ls -i** *NAME* **--format** prints for those columns: every value whole, as it takes effect, hosts in the order the inventory saves them. A Markdown file opens with a comment naming the inventory it comes from, then a blank line; a CSV file has no such line, since it would read as a row. A host that lists **table** in **exclude** stays out of every table of its inventory. Nothing in a table depends on the time or the machine, so an export with nothing changed reports every table unchanged, and the guard refuses a hand edit until **export --force**, as for any generated file.
 
 # FILES
 

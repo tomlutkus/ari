@@ -20,6 +20,7 @@ ari = "ari.cli:main"
 [project.entry-points."ari.modules"]
 ssh = "ari.modules.ssh:SshModule"
 ansible = "ari.modules.ansible:AnsibleModule"
+table = "ari.modules.table:TableModule"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13"]
