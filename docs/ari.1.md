@@ -310,6 +310,7 @@ columns = ["name", "hostname", "os", "groups", "notes"]
 | `inventories.NAME.ansible.hosts` | Hosts file in that directory; defaults to `00-hosts.yml` |
 | `inventories.NAME.ansible.zones` | Glob, or list of globs, naming the zone groups |
 | `inventories.NAME.ansible.groups` | Each group file, with the globs of the groups it holds |
+| `inventories.NAME.ansible.authorized_keys` | **true** lists each host's public keys in **ari_authorized_keys**; defaults to **false**; see GENERATED ANSIBLE INVENTORY |
 | `inventories.NAME.table.outputs` | Each table to write, with its **path** and **columns**, and optionally **format** and **mode**; see GENERATED TABLES |
 
 A table for a module that isn't installed is an error, unless it says **enabled = false**.
@@ -391,7 +392,7 @@ A file that fails to parse stops **ari** with the path and the error. It is neve
 
 **group** checks the group it writes the same way: a new name is usable, every child is declared, children form no cycle, and nothing a host relies on is removed. Only problems the write would add stop it; one already elsewhere in the inventory doesn't.
 
-**export** checks every inventory it covers before writing anything. Beyond names, keys, groups and reasons, including the keys the defaults list, every child group must be declared, children may not form a cycle, and no alias may be its host's own name in another case. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table, and, when **zones** is set, every host it exports is in exactly one zone.
+**export** checks every inventory it covers before writing anything. Beyond names, keys, groups and reasons, including the keys the defaults list, every child group must be declared, children may not form a cycle, and no alias may be its host's own name in another case. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table; when **zones** is set, every host it exports is in exactly one zone; and with **authorized_keys** on, every key **ari_authorized_keys** would list has a **pub**.
 
 # GENERATED SSH CONFIG
 
@@ -402,6 +403,18 @@ Every write goes to `FILE.tmp` beside the target and is then renamed over it. `I
 # GENERATED ANSIBLE INVENTORY
 
 The hosts file gets **all.vars** from the defaults, in the order **ansible_user**, **ansible_ssh_private_key_file**, **ansible_port**. With **zones** set, hosts come in sections, one per zone in the order the zones are declared, each opened by a blank line and a header comment padded to 62 characters. A zone without a description uses its group name. Within a section hosts sort by IP address, with names that aren't addresses after them. Each host gets **ansible_host**, **description** from its notes, and **ansible_user**, **ansible_port** or **ansible_ssh_private_key_file** only where it differs from the defaults. **ansible_ssh_private_key_file** takes one file, its first key's.
+
+With **authorized_keys = true** in the inventory's **ansible** table, the hosts file also lists public keys in **ari_authorized_keys**, for **ansible.posix.authorized_key** to deploy: the **pub** of every key ssh offers the host, in order, exactly as stored. The defaults' list goes in **all.vars** after **ansible_port**, and a host gets one of its own, after **ansible_ssh_private_key_file**, only where its keys make a different list. Ansible takes a host's list in place of the one in **all.vars**, as ssh takes a host's keys in place of the defaults'. A host with no keys anywhere gets none. Every key the var lists needs a **pub**, so export refuses one without and names the **ari key** *NAME* **--pub** that fills it. The var comes from the inventory alone: export still never reads a key file, and **ari** never connects to a host. A playbook deploys the keys, for instance:
+
+```yaml
+- ansible.posix.authorized_key:
+    user: "{{ ansible_user }}"
+    key: "{{ ari_authorized_keys | join('\n') }}"
+    exclusive: true
+  when: ari_authorized_keys is defined
+```
+
+**exclusive** removes every key the list leaves out, so skip a host without the var rather than giving it an empty list.
 
 Each file in the **groups** table holds the groups its globs match, in declaration order, under `all: children:`, one blank line before each group. A group lists its children first, then its hosts in the hosts file's order. Hosts without a reason come first; then each reason, in the order its group declares them, writes its text as a comment followed by its hosts.
 

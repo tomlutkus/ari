@@ -1497,6 +1497,15 @@ Each group file, with the globs of the
 groups it holds
 T}
 T{
+\f[V]inventories.NAME.ansible.authorized_keys\f[R]
+T}@T{
+\f[B]true\f[R] lists each host\[aq]s
+public keys in
+\f[B]ari_authorized_keys\f[R]; defaults
+to \f[B]false\f[R]; see GENERATED
+ANSIBLE INVENTORY
+T}
+T{
 \f[V]inventories.NAME.table.outputs\f[R]
 T}@T{
 Each table to write, with its
@@ -1776,9 +1785,12 @@ The \f[B]ansible\f[R] module adds its
 own rules: every declared group is a
 valid Ansible group name and matches
 exactly one entry in the
-\f[B]groups\f[R] table, and, when
+\f[B]groups\f[R] table; when
 \f[B]zones\f[R] is set, every host it
-exports is in exactly one zone.
+exports is in exactly one zone; and with
+\f[B]authorized_keys\f[R] on, every key
+\f[B]ari_authorized_keys\f[R] would list
+has a \f[B]pub\f[R].
 .SH GENERATED SSH CONFIG
 .PP
 Hosts are sorted by name.
@@ -1833,6 +1845,53 @@ and \f[B]ansible_user\f[R],
 only where it differs from the defaults.
 \f[B]ansible_ssh_private_key_file\f[R]
 takes one file, its first key\[aq]s.
+.PP
+With \f[B]authorized_keys = true\f[R] in
+the inventory\[aq]s \f[B]ansible\f[R]
+table, the hosts file also lists public
+keys in \f[B]ari_authorized_keys\f[R],
+for
+\f[B]ansible.posix.authorized_key\f[R]
+to deploy: the \f[B]pub\f[R] of every
+key ssh offers the host, in order,
+exactly as stored.
+The defaults\[aq] list goes in
+\f[B]all.vars\f[R] after
+\f[B]ansible_port\f[R], and a host gets
+one of its own, after
+\f[B]ansible_ssh_private_key_file\f[R],
+only where its keys make a different
+list.
+Ansible takes a host\[aq]s list in place
+of the one in \f[B]all.vars\f[R], as ssh
+takes a host\[aq]s keys in place of the
+defaults\[aq].
+A host with no keys anywhere gets none.
+Every key the var lists needs a
+\f[B]pub\f[R], so export refuses one
+without and names the \f[B]ari key\f[R]
+\f[I]NAME\f[R] \f[B]--pub\f[R] that
+fills it.
+The var comes from the inventory alone:
+export still never reads a key file, and
+\f[B]ari\f[R] never connects to a host.
+A playbook deploys the keys, for
+instance:
+.IP
+.nf
+\f[C]
+- ansible.posix.authorized_key:
+    user: \[dq]{{ ansible_user }}\[dq]
+    key: \[dq]{{ ari_authorized_keys | join(\[aq]\[rs]n\[aq]) }}\[dq]
+    exclusive: true
+  when: ari_authorized_keys is defined
+\f[R]
+.fi
+.PP
+\f[B]exclusive\f[R] removes every key
+the list leaves out, so skip a host
+without the var rather than giving it an
+empty list.
 .PP
 Each file in the \f[B]groups\f[R] table
 holds the groups its globs match, in

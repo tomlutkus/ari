@@ -29,6 +29,9 @@ MODE = 0o644  # inventory files are read by whoever runs the playbooks, not only
 # all.vars and host vars that map onto host fields. The key file becomes a declared key.
 _VARS = {"ansible_user": "user", "ansible_ssh_private_key_file": "keys", "ansible_port": "port"}
 
+# The public halves of the keys ssh offers a host, for ansible.posix.authorized_key to deploy.
+AUTHORIZED = "ari_authorized_keys"
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -36,6 +39,7 @@ class Settings:
     hosts: str
     zones: tuple[str, ...]
     routes: tuple[tuple[str, tuple[str, ...]], ...]  # (file, globs), in config order
+    authorized_keys: bool = False  # write AUTHORIZED
 
 
 def _file_name(value: Any, where: str) -> str:
@@ -109,9 +113,18 @@ def _first_key(inventory: Inventory, names: list[str]) -> str | None:
     return paths[0] if paths else None
 
 
-def _host_vars(inventory: Inventory, host: Host) -> list[tuple[str, str | int]]:
+def _pubs(inventory: Inventory, names: list[str]) -> list[str]:
+    """The public halves of the named keys, as stored. With AUTHORIZED on, validate refuses a key
+    without one before anything renders."""
+    return [inventory.keys[name].pub or "" for name in names if name in inventory.keys]
+
+
+Value = str | int | list[str]
+
+
+def _host_vars(inventory: Inventory, host: Host, authorized: bool = False) -> list[tuple[str, Value]]:
     d = inventory.defaults
-    out: list[tuple[str, str | int]] = [("ansible_host", host.hostname)]
+    out: list[tuple[str, Value]] = [("ansible_host", host.hostname)]
     if host.notes:
         out.append(("description", host.notes))
     if host.user is not None and host.user != d.user:
@@ -121,12 +134,25 @@ def _host_vars(inventory: Inventory, host: Host) -> list[tuple[str, str | int]]:
     key = _first_key(inventory, host.keys)
     if key is not None and key != _first_key(inventory, d.keys):
         out.append(("ansible_ssh_private_key_file", key))
+    if authorized:
+        # A host var replaces all.vars' list whole, as a host's keys replace the defaults', so it's
+        # written only where the host's list differs.
+        pubs = _pubs(inventory, inventory.host_keys(host))
+        if pubs and pubs != _pubs(inventory, d.keys):
+            out.append((AUTHORIZED, pubs))
     return out
 
 
-def render_hosts(inventory: Inventory, parts: list[tuple[str | None, list[Host]]]) -> str:
+def _var(indent: str, key: str, value: Value) -> list[str]:
+    """One var: a scalar on its line, or a list as a block sequence below it."""
+    if isinstance(value, list):
+        return [f"{indent}{key}:"] + [f"{indent}  - {scalar(item)}" for item in value]
+    return [f"{indent}{key}: {scalar(value)}"]
+
+
+def render_hosts(inventory: Inventory, parts: list[tuple[str | None, list[Host]]], authorized: bool = False) -> str:
     d = inventory.defaults
-    all_vars = [
+    all_vars: list[tuple[str, Value]] = [
         (k, v)
         for k, v in (
             ("ansible_user", d.user),
@@ -135,10 +161,13 @@ def render_hosts(inventory: Inventory, parts: list[tuple[str | None, list[Host]]
         )
         if v is not None
     ]
+    if authorized and d.keys:
+        all_vars.append((AUTHORIZED, _pubs(inventory, d.keys)))
     lines = ["all:"]
     if all_vars:
         lines.append("  vars:")
-        lines += [f"    {k}: {scalar(v)}" for k, v in all_vars]
+        for k, v in all_vars:
+            lines += _var("    ", k, v)
     if any(members for _, members in parts):
         lines.append("  hosts:")
         for zone, members in parts:
@@ -148,7 +177,8 @@ def render_hosts(inventory: Inventory, parts: list[tuple[str | None, list[Host]]
                 lines += [f"    # {line}".rstrip() for line in rest]
             for host in members:
                 lines.append(f"    {scalar(host.name)}:")
-                lines += [f"      {k}: {scalar(v)}" for k, v in _host_vars(inventory, host)]
+                for k, v in _host_vars(inventory, host, authorized):
+                    lines += _var("      ", k, v)
     elif not all_vars:
         lines = ["all: {}"]
     return "\n".join(lines) + "\n"
@@ -444,8 +474,11 @@ class AnsibleModule(Module):
         hosts = _file_name(table.pop("hosts", "00-hosts.yml"), f"{where}.hosts")
         zones = _globs(table.pop("zones"), f"{where}.zones") if "zones" in table else ()
         groups = table.pop("groups", {})
+        authorized = table.pop("authorized_keys", False)
         if table:
             raise HostsError(f"{where}: unknown keys {sorted(table)}")
+        if not isinstance(authorized, bool):
+            raise HostsError(f"{where}.authorized_keys: use true or false")
         if not isinstance(directory, str) or not directory:
             raise HostsError(f'{where}: needs dir = "~/path/to/inventory"')
         path = Path(directory).expanduser()
@@ -459,7 +492,7 @@ class AnsibleModule(Module):
             if name == hosts:
                 raise HostsError(f"{where}.groups: {name} is the hosts file")
             routes.append((name, _globs(globs, f"{where}.groups.{name}")))
-        return Settings(path, hosts, zones, tuple(routes))
+        return Settings(path, hosts, zones, tuple(routes), authorized)
 
     def host_data(self, data: dict[str, Any], where: str) -> dict[str, Any]:
         if data:
@@ -486,13 +519,22 @@ class AnsibleModule(Module):
                     problems.append(f"{host.name} is in no zone")
                 elif len(zones) > 1:
                     problems.append(f"{host.name} is in more than one zone: {', '.join(zones)}")
+        if settings.authorized_keys:
+            # The keys AUTHORIZED carries: the defaults', in all.vars whatever the hosts do, and each host's own.
+            names = [*inventory.defaults.keys, *(name for host in hosts for name in host.keys)]
+            for name in dict.fromkeys(names):
+                key = inventory.keys.get(name)
+                if key is not None and key.pub is None:
+                    problems.append(
+                        f"key {name!r} has no pub to write in {AUTHORIZED}; fill it with ari key {name} --pub -i {inventory.name}"
+                    )
         return problems
 
     def export(self, inventory: Inventory, hosts: list[Host], settings: Settings) -> list[Output]:
         """The hosts file and the routed group files, 0644 like the rest of the repository they live in."""
         parts = sections(inventory, hosts, settings)
         order = [h for _, members in parts for h in members]
-        hosts_file = render_hosts(inventory, parts).encode("utf-8")
+        hosts_file = render_hosts(inventory, parts, settings.authorized_keys).encode("utf-8")
         outputs = [Output(settings.dir / settings.hosts, hosts_file, len(order), MODE)]
         for file, names in routing(inventory, settings).items():
             count = len({h.name for h in order if any(g in h.groups for g in names)})

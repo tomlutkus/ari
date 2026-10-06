@@ -183,11 +183,19 @@ def test_group_file_children_first_then_plain_hosts_then_reasons_in_declared_ord
         ({"dir": "~/inv", "groups": {"10.yml": []}}, "glob or a list of globs"),
         ({"dir": "~/inv", "zones": 5}, "glob or a list of globs"),
         ({"dir": "~/inv", "colour": "blue"}, "unknown keys"),
+        ({"dir": "~/inv", "authorized_keys": "yes"}, r"inventories\.work\.ansible\.authorized_keys: use true or false"),
+        ({"dir": "~/inv", "authorized_keys": 1}, "use true or false"),
     ],
 )
 def test_bad_settings_explain_themselves(table, message):
     with pytest.raises(HostsError, match=message):
         AnsibleModule().settings(table, "config.toml: inventories.work.ansible")
+
+
+def test_authorized_keys_is_off_unless_turned_on():
+    module = AnsibleModule()
+    assert module.settings({"dir": "~/inv"}, "x").authorized_keys is False
+    assert module.settings({"dir": "~/inv", "authorized_keys": True}, "x").authorized_keys is True
 
 
 def test_registered_through_its_entry_point():
@@ -607,3 +615,148 @@ def test_ansible_reads_empty_groups_and_files(tmp_path):
     (tmp_path / "c.yml").write_text(render_hosts(inventory, []))
     done = subprocess.run(["ansible-inventory", "-i", str(tmp_path), "--list"], capture_output=True, text=True, check=True)
     assert json.loads(done.stdout)["parent"]["children"] == ["empty"]
+
+
+# ari_authorized_keys
+
+LAB = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGxhYmxhYmxhYmxhYmxhYmxhYmxhYmxhYmxhYmxhYmxh lab tom@desk"
+SPARE = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHNwYXJlc3BhcmVzcGFyZXNwYXJlc3BhcmVzcGFyZXNw"
+EXTRA = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQDleHRyYQ== extra #1: old laptop"
+PUBS = {"lab": LAB, "spare": SPARE, "extra": EXTRA}
+
+
+def test_authorized_keys_in_all_vars_and_on_hosts_whose_list_differs():
+    defaults = Defaults(user="deploy", keys=["lab", "spare"])
+    keys = {name: KeyDef(f"~/.ssh/{name}", pub) for name, pub in PUBS.items()}
+    inventory = Inventory("t", FIXTURES / "t.json", defaults=defaults, keys=keys)
+    hosts = [
+        Host("both", "192.0.2.1"),
+        Host("same", "192.0.2.2", keys=["lab", "spare"]),  # its own list, the defaults' keys
+        Host("lab-only", "192.0.2.3", keys=["lab"]),
+        Host("extra-first", "192.0.2.4", keys=["extra", "lab"]),
+    ]
+    text = render_hosts(inventory, sections(inventory, hosts, settings(zones=())), authorized=True)
+    assert text == (
+        "all:\n"
+        "  vars:\n"
+        "    ansible_user: deploy\n"
+        "    ansible_ssh_private_key_file: ~/.ssh/lab\n"
+        "    ari_authorized_keys:\n"
+        f"      - {LAB}\n"
+        f"      - {SPARE}\n"
+        "  hosts:\n"
+        "    both:\n"
+        "      ansible_host: 192.0.2.1\n"
+        "    same:\n"
+        "      ansible_host: 192.0.2.2\n"
+        "    lab-only:\n"
+        "      ansible_host: 192.0.2.3\n"
+        "      ari_authorized_keys:\n"
+        f"        - {LAB}\n"
+        "    extra-first:\n"
+        "      ansible_host: 192.0.2.4\n"
+        "      ansible_ssh_private_key_file: ~/.ssh/extra\n"
+        "      ari_authorized_keys:\n"
+        f'        - "{EXTRA}"\n'
+        f"        - {LAB}\n"
+    )
+    assert yaml.safe_load(text)["all"]["hosts"]["extra-first"]["ari_authorized_keys"] == [EXTRA, LAB]
+    # Off, the same file without the var: nothing else moves.
+    plain = [line for line in text.splitlines(keepends=True) if "ari_authorized_keys" not in line and "- " not in line]
+    assert render_hosts(inventory, sections(inventory, hosts, settings(zones=()))) == "".join(plain)
+
+
+def test_without_default_keys_only_hosts_with_keys_get_the_var():
+    keys = {"lab": KeyDef("~/.ssh/lab", LAB)}
+    inventory = Inventory("t", FIXTURES / "t.json", keys=keys)
+    hosts = [Host("bare", "192.0.2.1"), Host("keyed", "192.0.2.2", keys=["lab"])]
+    loaded = yaml.safe_load(render_hosts(inventory, sections(inventory, hosts, settings(zones=())), authorized=True))
+    assert "vars" not in loaded["all"]
+    assert loaded["all"]["hosts"] == {
+        "bare": {"ansible_host": "192.0.2.1"},
+        "keyed": {"ansible_host": "192.0.2.2", "ansible_ssh_private_key_file": "~/.ssh/lab", "ari_authorized_keys": [LAB]},
+    }
+
+
+def with_pubs(hosts=None, **pubs):
+    data = json.loads(json.dumps(SEVERAL))
+    for name, pub in pubs.items():
+        data["keys"][name]["pub"] = pub
+    if hosts is not None:
+        data["hosts"] = hosts
+    return data
+
+
+def authorized(home, data, setting="true"):
+    write_config(home, f'[inventories.work.ansible]\ndir = "SSH/ansible"\nauthorized_keys = {setting}\n')
+    work_json(home).write_text(json.dumps(data))
+
+
+def test_a_key_without_pub_stops_the_export_and_names_the_fix(home, capsys):
+    hosts = SEVERAL["hosts"] + [{"name": "away", "hostname": "192.0.2.9", "keys": ["extra"], "exclude": ["ansible"]}]
+    authorized(home, with_pubs(hosts, lab=LAB))
+    assert run("export") == 1
+    err = capsys.readouterr().err
+    assert "work/ansible: key 'spare' has no pub to write in ari_authorized_keys; fill it with ari key spare --pub -i work" in err
+    assert "key 'extra' has no pub" in err  # lab-first and extra-first list it
+    assert "key 'lab' has no pub" not in err
+    assert not (home / "ssh" / "ansible").exists()
+    # A key only an excluded host lists needs none.
+    hosts = [h for h in hosts if "extra" not in h.get("keys", []) or "exclude" in h]
+    authorized(home, with_pubs(hosts, lab=LAB, spare=SPARE))
+    assert run("export") == 0
+    assert "ari_authorized_keys" in (home / "ssh" / "ansible" / "00-hosts.yml").read_text()
+
+
+def test_off_needs_no_pub_and_writes_the_same_bytes(home, capsys):
+    authorized(home, with_pubs(lab=LAB), setting="false")
+    assert run("export") == 0
+    off = (home / "ssh" / "ansible" / "00-hosts.yml").read_bytes()
+    assert b"ari_authorized_keys" not in off
+    write_config(home, '[inventories.work.ansible]\ndir = "SSH/ansible"\n')
+    assert run("export") == 0
+    assert "unchanged" in capsys.readouterr().out
+    assert (home / "ssh" / "ansible" / "00-hosts.yml").read_bytes() == off
+
+
+def test_the_work_fixture_exports_the_same_files_with_the_setting_off(work):
+    config = work / "config" / "ari" / "config.toml"
+    config.write_text(config.read_text().replace('zones = "zone_*"\n', 'zones = "zone_*"\nauthorized_keys = false\n'))
+    assert run("export") == 0
+    for name in FILES:
+        assert (work / "ssh" / "ansible" / name).read_text() == (FIXTURES / "ansible.expected" / name).read_text(), name
+
+
+def test_until_import_knows_the_var_it_is_reported_and_the_files_not_adopted(home, capsys):
+    authorized(home, with_pubs(lab=LAB, spare=SPARE, extra=EXTRA))
+    assert run("export") == 0
+    capsys.readouterr()
+    assert run("-i", "work", "import", "ansible", str(home / "ssh" / "ansible")) == 0
+    out = capsys.readouterr()
+    assert "all.vars.ari_authorized_keys not imported" in out.err
+    assert "(extra-first): ari_authorized_keys not imported" in out.err
+    assert "not adopted" in out.err
+
+
+@pytest.mark.skipif(shutil.which("ansible-inventory") is None, reason="needs ansible-inventory")
+def test_ansible_sees_each_hosts_public_keys_and_nothing_else_changes(home, tmp_path):
+    def listing(directory):
+        done = subprocess.run(["ansible-inventory", "-i", str(directory), "--list"], capture_output=True, text=True, check=True)
+        return json.loads(done.stdout)
+
+    authorized(home, with_pubs(lab=LAB, spare=SPARE, extra=EXTRA), setting="false")
+    assert run("export") == 0
+    off = tmp_path / "off"
+    shutil.copytree(home / "ssh" / "ansible", off)
+    authorized(home, with_pubs(lab=LAB, spare=SPARE, extra=EXTRA))
+    assert run("export") == 0
+    before, after = listing(off), listing(home / "ssh" / "ansible")
+    hostvars = after["_meta"].pop("hostvars")
+    assert {name: set(v.pop("ari_authorized_keys")) for name, v in hostvars.items()} == {
+        "both": {LAB, SPARE},
+        "lab-first": {LAB, EXTRA},
+        "lab-only": {LAB},
+        "extra-first": {EXTRA, LAB},
+    }
+    assert hostvars == before["_meta"].pop("hostvars")
+    assert after == before
