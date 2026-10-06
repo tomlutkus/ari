@@ -236,11 +236,22 @@ class _Reader:
     members: dict[str, list[str]] = field(default_factory=dict)
     keys: dict[str, KeyDef] = field(default_factory=dict)
     lossy: bool = False
+    # AUTHORIZED, read to be checked against the record and never stored: all.vars' list and each host's own.
+    authorized: bool = False
+    default_pubs: list[str] | None = None
+    pubs: dict[str, list[str]] = field(default_factory=dict)
 
     def _lose(self, message: str) -> None:
         """Something Ansible would use that the import leaves out."""
         self.warnings.append(message)
         self.lossy = True
+
+    def _pubs(self, value: Any, where: str) -> list[str] | None:
+        if not isinstance(value, list) or not all(isinstance(v, str) and v and "\n" not in v for v in value):
+            self._lose(f"{where}: {AUTHORIZED} isn't a list of one-line strings; not imported")
+            return None
+        self.authorized = True
+        return value
 
     def read(self, path: Path) -> None:
         where = tilde(path)
@@ -302,6 +313,13 @@ class _Reader:
             return
         self.saw_vars = True
         for key, value in data.items():
+            if key == AUTHORIZED:
+                pubs = self._pubs(value, f"{where}: all.vars")
+                if pubs is not None and self.default_pubs is not None and pubs != self.default_pubs:
+                    self._lose(f"{where}: all.vars.{key} differs from an earlier file; kept the first")
+                elif pubs is not None:
+                    self.default_pubs = pubs
+                continue
             field_name = _VARS.get(key)
             if field_name is None:
                 self._lose(f"{where}: all.vars.{key} not imported")
@@ -350,10 +368,13 @@ class _Reader:
             self._lose(f"{where}: ansible_host {hostname!r} has spaces; host skipped")
             return
         host = Host(name=name, hostname=hostname)
+        pubs = None
         for key, value in data.items():
             if key == "ansible_host":
                 continue
-            if key == "description":
+            if key == AUTHORIZED:
+                pubs = self._pubs(value, where)
+            elif key == "description":
                 if isinstance(value, str):
                     host.notes = value
                 elif value is not None:
@@ -370,7 +391,9 @@ class _Reader:
         if existing is None:
             self.hosts[name] = host
             self.hosts_file = self.hosts_file or path.name
-        elif existing.to_dict() != host.to_dict():
+            if pubs is not None:
+                self.pubs[name] = pubs
+        elif existing.to_dict() != host.to_dict() or self.pubs.get(name) != pubs:
             self._lose(f"{where}: defined again with different vars; kept the first")
 
     def _group(self, name: str, data: Any, path: Path) -> None:
@@ -442,6 +465,8 @@ class _Reader:
                 f" hosts only, so they need a file in the groups table, and the suggested one is {file}"
             )
         settings: dict[str, Any] = {"dir": tilde(directory), "hosts": hosts_file}
+        if self.authorized:
+            settings["authorized_keys"] = True
         if routes:
             settings["groups"] = dict(sorted(routes.items()))
         defaults = None
@@ -449,8 +474,11 @@ class _Reader:
             path = self.defaults.get("keys")
             keys = [declare_key(self.keys, path)] if path is not None else []
             defaults = Defaults(self.defaults.get("user"), self.defaults.get("port"), keys)
+        hosts = list(self.hosts.values())
+        # A host's own list, else all.vars', as Ansible reads them.
+        pubs = [self.pubs.get(h.name, self.default_pubs) for h in hosts] if self.authorized else None
         return ImportResult(
-            list(self.hosts.values()),
+            hosts,
             self.warnings,
             self.files,
             defaults,
@@ -459,6 +487,7 @@ class _Reader:
             self.lossy,
             keys=self.keys,
             first_key_only=True,
+            pubs=pubs,
         )
 
 

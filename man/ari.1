@@ -1050,6 +1050,24 @@ wrote for a host with several keys
 changes nothing, and a new host naming
 the first of the defaults\[aq] keys
 takes their whole list.
+\f[B]ari_authorized_keys\f[R] is checked
+and never stored: each host\[aq]s list,
+or the one in \f[B]all.vars\f[R] when it
+has none, is compared in order with the
+\f[B]pub\f[R] of the keys the host ends
+up with, on the key and not its comment.
+On a host already in the inventory,
+another key, or a key without a
+\f[B]pub\f[R], is a conflict; a new host
+is added and its list reported as not
+imported, since import never sets a
+\f[B]pub\f[R].
+The same keys under other comments are
+reported and the inventory\[aq]s kept.
+Any of these leaves the files unadopted.
+When the source has the var, the table
+import prints turns
+\f[B]authorized_keys\f[R] on.
 Anything else is reported as not
 imported: other vars, group vars, and
 members that no hosts section defines.

@@ -727,15 +727,113 @@ def test_the_work_fixture_exports_the_same_files_with_the_setting_off(work):
         assert (work / "ssh" / "ansible" / name).read_text() == (FIXTURES / "ansible.expected" / name).read_text(), name
 
 
-def test_until_import_knows_the_var_it_is_reported_and_the_files_not_adopted(home, capsys):
+def exported(home):
+    """A setting-on export of the several-keys inventory: the hosts file and the inventory's bytes."""
     authorized(home, with_pubs(lab=LAB, spare=SPARE, extra=EXTRA))
     assert run("export") == 0
+    return home / "ssh" / "ansible" / "00-hosts.yml", work_json(home).read_bytes()
+
+
+def test_reimporting_what_export_wrote_with_the_var_is_unchanged(home, capsys):
+    hosts_file, before = exported(home)
     capsys.readouterr()
-    assert run("-i", "work", "import", "ansible", str(home / "ssh" / "ansible")) == 0
+    assert run("-i", "work", "import", "ansible", str(hosts_file.parent)) == 0
     out = capsys.readouterr()
-    assert "all.vars.ari_authorized_keys not imported" in out.err
-    assert "(extra-first): ari_authorized_keys not imported" in out.err
+    assert out.out == "work: 4 unchanged (both, lab-first, lab-only, extra-first)\n"
+    assert out.err == ""  # nothing left out, so the files are adopted
+    assert work_json(home).read_bytes() == before
+
+
+def test_other_public_keys_conflict(home, capsys):
+    hosts_file, before = exported(home)
+    block = f"    lab-only:\n      ansible_host: 192.0.2.3\n      ari_authorized_keys:\n        - {LAB}\n"
+    text = hosts_file.read_text()
+    assert block in text
+    hosts_file.write_text(text.replace(block, block.replace(LAB, SPARE)))
+    capsys.readouterr()
+    assert run("-i", "work", "import", "ansible", str(hosts_file.parent)) == 1
+    out = capsys.readouterr()
+    assert "conflict: lab-only: the public keys the source lists differ from the pub of its keys; not merged" in out.err
     assert "not adopted" in out.err
+    assert "3 unchanged (both, lab-first, extra-first)" in out.out
+    assert work_json(home).read_bytes() == before
+
+
+def test_a_key_without_pub_in_the_record_conflicts(home, capsys):
+    hosts_file, _ = exported(home)
+    work_json(home).write_text(json.dumps(with_pubs(lab=LAB, extra=EXTRA)))  # spare's pub gone since
+    capsys.readouterr()
+    assert run("-i", "work", "import", "ansible", str(hosts_file.parent)) == 1
+    out = capsys.readouterr()
+    assert "conflict: both: the public keys the source lists differ from the pub of its keys; not merged" in out.err
+    assert "3 unchanged (lab-first, lab-only, extra-first)" in out.out
+
+
+def test_other_comments_warn_and_leave_the_files_unadopted(home, capsys):
+    hosts_file, before = exported(home)
+    hosts_file.write_text(hosts_file.read_text().replace("lab tom@desk", "lab tom@laptop"))
+    capsys.readouterr()
+    assert run("-i", "work", "import", "ansible", str(hosts_file.parent)) == 0
+    out = capsys.readouterr()
+    assert out.out == "work: 4 unchanged (both, lab-first, lab-only, extra-first)\n"
+    assert (
+        "warning: the public keys the source lists for both, lab-first, lab-only, extra-first differ from the pub of"
+        " their keys only in their comments; kept the inventory's" in " ".join(out.err.split())
+    )
+    assert "00-hosts.yml not adopted" in out.err
+    assert work_json(home).read_bytes() == before
+
+
+def test_new_hosts_are_checked_and_public_keys_their_keys_dont_hold_are_not_imported(home, tmp_path, capsys):
+    authorized(home, with_pubs([], lab=LAB, spare=SPARE, extra=EXTRA))
+    source = hosts_yml(tmp_path, (
+        "all:\n  vars:\n    ansible_ssh_private_key_file: ~/.ssh/lab\n"
+        f"    ari_authorized_keys:\n      - {LAB}\n      - {SPARE}\n"
+        "  hosts:\n"
+        "    n1:\n      ansible_host: 192.0.2.21\n"
+        f"    n2:\n      ansible_host: 192.0.2.22\n      ansible_ssh_private_key_file: ~/.ssh/extra\n"
+        f'      ari_authorized_keys:\n        - "{EXTRA}"\n'
+        f"    n3:\n      ansible_host: 192.0.2.23\n      ari_authorized_keys:\n        - {LAB}\n        - {SPARE}\n        - {LAB}\n"
+        "    n4:\n      ansible_host: 192.0.2.24\n      ansible_ssh_private_key_file: ~/.ssh/new\n"
+        "      ari_authorized_keys:\n        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG5ldw==\n"
+    ))
+    assert run("-i", "work", "import", "ansible", source) == 0
+    out = capsys.readouterr()
+    assert "work: 4 added (n1, n2, n3, n4)" in out.out
+    assert "1 key declared (new)" in out.out
+    assert (
+        "the public keys the source lists for n3, n4 aren't the pub of their keys, and import never sets a pub;"
+        " not imported" in " ".join(out.err.split())
+    )
+    assert "not adopted" in out.err
+    data = json.loads(work_json(home).read_text())
+    assert "pub" not in data["keys"]["new"]
+    assert [h.get("keys") for h in data["hosts"]] == [None, ["extra"], None, ["new"]]
+
+
+@pytest.mark.parametrize(
+    "where, value",
+    [("all.vars", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5"), ("(a)", "[5]"), ("(a)", '["two\\nlines"]'), ("(a)", '[""]')],
+)
+def test_a_var_that_isnt_a_list_of_lines_is_reported(home, tmp_path, capsys, where, value):
+    authorized(home, with_pubs([], lab=LAB, spare=SPARE))
+    if where == "all.vars":
+        text = f"all:\n  vars:\n    ari_authorized_keys: {value}\n  hosts:\n    a:\n      ansible_host: 192.0.2.1\n"
+    else:
+        text = f"all:\n  hosts:\n    a:\n      ansible_host: 192.0.2.1\n      ari_authorized_keys: {value}\n"
+    assert run("-i", "work", "import", "ansible", hosts_yml(tmp_path, text)) == 0
+    out = capsys.readouterr()
+    assert f"{where}: ari_authorized_keys isn't a list of one-line strings; not imported" in out.err
+    assert "not adopted" in out.err and "work: 1 added (a)" in out.out
+
+
+def test_the_suggested_table_turns_the_var_on_when_the_source_has_it(home, tmp_path, capsys):
+    write_config(home, '[inventories.work.ssh]\npath = "SSH/20-work.conf"\n')
+    source = hosts_yml(tmp_path, f"all:\n  hosts:\n    a:\n      ansible_host: 192.0.2.1\n      ari_authorized_keys:\n        - {LAB}\n")
+    assert run("-i", "work", "import", "ansible", source) == 0
+    assert 'hosts = "00-hosts.yml"\nauthorized_keys = true\n' in capsys.readouterr().out
+    assert run("-i", "work", "import", "ansible", str(FIXTURES / "ansible")) == 0
+    assert "authorized_keys" not in capsys.readouterr().out
 
 
 @pytest.mark.skipif(shutil.which("ansible-inventory") is None, reason="needs ansible-inventory")

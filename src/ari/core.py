@@ -719,6 +719,21 @@ def _difference(inventory: Inventory, existing: Host, incoming: Host, first_only
     return None
 
 
+def _pub_difference(inventory: Inventory, host: Host, listed: list[str]) -> str | None:
+    """How the public keys a source lists for a host differ from the pub of the keys ssh offers it,
+    in order: "keys" when any is another key, a key has no pub or the counts differ, "comments"
+    when only the rest of a line does, None when they agree. Keys compare on type and key, as ssh
+    compares them."""
+    record = [inventory.keys[name].pub for name in inventory.host_keys(host) if name in inventory.keys]
+
+    def key(line: str) -> list[str]:
+        return line.split()[:2]
+
+    if len(record) != len(listed) or any(pub is None or key(pub) != key(line) for pub, line in zip(record, listed)):
+        return "keys"
+    return "comments" if record != listed else None
+
+
 def _merge(inventory: Inventory, existing: Host, incoming: Host) -> bool:
     changed = False
     if incoming.notes and not existing.notes:
@@ -791,6 +806,10 @@ def import_hosts(
     label = tilde(result.files[0][0]) if result.files else (source or module_name)
     report = ImportReport(target.name, label, warnings=list(result.warnings))
     added_keys = _adopt_keys(target, result.keys, result.hosts, result.defaults.keys if result.defaults else [])
+    # Each host's public keys, by host rather than by position, since refused hosts drop out below.
+    listed = {id(h): pubs for h, pubs in zip(result.hosts, result.pubs or []) if pubs is not None}
+    reworded: list[str] = []  # the same keys under other comments
+    unlisted: list[str] = []  # new hosts whose keys don't hold the public keys the source lists
 
     # A host that would make the inventory unreadable never gets near it, nor near the defaults.
     readable = []
@@ -904,6 +923,9 @@ def import_hosts(
             host.last_updated = now()
             target.hosts.append(host)
             report.added.append(host.name)
+            found = _pub_difference(target, host, listed[id(host)]) if id(host) in listed else None
+            if found:
+                (reworded if found == "comments" else unlisted).append(host.name)
             continue
         difference = _difference(target, existing, host, result.first_key_only)
         if difference:
@@ -912,8 +934,15 @@ def import_hosts(
         candidate = copy.deepcopy(existing)
         _merge(target, candidate, host)
         _strip_defaults(target, candidate)
+        # The public keys the source lists are checked against the keys the host ends up with, and never stored.
+        found = _pub_difference(target, candidate, listed[id(host)]) if id(host) in listed else None
+        if found == "keys":
+            report.conflicts.append(f"{host.name}: the public keys the source lists differ from the pub of its keys; not merged")
+            continue
         if candidate.to_dict() == existing.to_dict():
             report.unchanged.append(host.name)
+            if found:
+                reworded.append(host.name)
             continue
         # ssh gives a block's settings only to the tokens it names, as typed: one that leaves out a
         # name the host answers to, or writes it in another case, can't change what the whole
@@ -931,12 +960,24 @@ def import_hosts(
         candidate.last_updated = now()
         target.hosts = [candidate if h is existing else h for h in target.hosts]
         report.merged.append(host.name)
+        if found:
+            reworded.append(host.name)
 
     if differ:
         pinned = [name for name in report.added + report.merged if name in leaning]
         report.warnings.append(
             "the source's defaults differ from the inventory's; kept the inventory's"
             + (f", and pinned the source's on {', '.join(pinned)}" if pinned else "")
+        )
+    if reworded:
+        report.warnings.append(
+            f"the public keys the source lists for {', '.join(reworded)} differ from the pub of their keys only in"
+            " their comments; kept the inventory's"
+        )
+    if unlisted:
+        report.warnings.append(
+            f"the public keys the source lists for {', '.join(unlisted)} aren't the pub of their keys, and import"
+            " never sets a pub; not imported"
         )
 
     # A key declared for this import stays only when something saved uses it.
@@ -951,7 +992,7 @@ def import_hosts(
     # The guard records a source only when the inventory now holds all of it, so an export over
     # that file loses nothing. Anything conflicted, refused or left out means a person looks first.
     if result.files:
-        if report.conflicts or report.refused or result.lossy:
+        if report.conflicts or report.refused or result.lossy or reworded or unlisted:
             report.unadopted = [tilde(path) for path, _ in result.files]
         else:
             guard = Guard()

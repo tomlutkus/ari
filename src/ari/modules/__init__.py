@@ -54,6 +54,10 @@ class ImportResult:
     # The source names only each host's first key, as Ansible's one key file does. A record whose
     # key list starts with that key agrees with it.
     first_key_only: bool = False
+    # For each host, the public keys the source says it accepts, or None where it says nothing;
+    # None throughout for a source that never carries them. Import checks them against the pub of
+    # the host's keys and stores nothing from them.
+    pubs: list[list[str] | None] | None = None
 
 
 class Module:
