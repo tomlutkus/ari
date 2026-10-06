@@ -285,7 +285,7 @@ class HostForm(Screen[str | None]):
                 self.dismiss(self.host.name)
                 return
             else:
-                inventory, host, changed = core.edit_host(self.cfg, self.host.name, c, self.inventory)
+                inventory, host, changed = core.edit_host(self.cfg, self.host.name, c, self.inventory, by_name=True)
                 done = f"{'updated' if changed else 'no change to'} {host.name} ({inventory.name})"
         except core.HostRefused as e:
             self.show(e.problems)
@@ -413,7 +413,7 @@ class GroupPicker(Screen[str | None]):
             self.dismiss(self.host.name)
             return
         try:
-            inventory, host, changed = core.edit_host(self.cfg, self.host.name, c, self.inventory.name)
+            inventory, host, changed = core.edit_host(self.cfg, self.host.name, c, self.inventory.name, by_name=True)
         except HostsError as e:
             problems = e.problems if isinstance(e, core.HostRefused) else [core.Problem(None, str(e))]
             error = self.query_one("#error-general", Static)
@@ -767,7 +767,7 @@ class HostList(Screen):
         except HostsError as e:
             self.app.notify(str(e), severity="error")
             return
-        host = inventory.find(row[1].name)
+        host = inventory.named(row[1].name)
         if host is None:
             self.app.notify(f"{row[1].name} is no longer in {inventory.name}", severity="error")
             self.reload()
@@ -802,7 +802,7 @@ class HostList(Screen):
         inventory, host = row
         index = self.query_one(DataTable).cursor_row
         try:
-            core.remove_host(self.cfg, host.name, inventory.name)
+            core.remove_host(self.cfg, host.name, inventory.name, by_name=True)
         except HostsError as e:
             self.app.notify(str(e), severity="error")
         else:

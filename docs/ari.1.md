@@ -44,7 +44,7 @@ ari - keep SSH hosts in one place and generate ssh config, Ansible inventory and
 
 Group membership lives on the host record, so removing a host removes it from every group, and no group can name a host that doesn't exist.
 
-Names and aliases are unique across all inventories, ignoring case, so no two differ only in case. Every generated file lands in one ssh namespace where the first match wins, so a duplicate would silently shadow a host.
+Names and aliases are unique across all inventories, ignoring case, so no two differ only in case. Every generated file lands in one ssh namespace where the first match wins, so a duplicate would silently shadow a host. An inventory edited by hand, or shared through **file**, can still break the rule: export refuses it, and **show**, **edit** and **rm** refuse a name or alias that more than one host answers to, naming each, rather than act on the first.
 
 Generated files are output, not something to edit. **ari** records a hash of every file it writes and refuses to overwrite one that changed since.
 
@@ -146,7 +146,7 @@ Every **--opt** given for one keyword in one command is that keyword's new value
 
 ## rm *NAME*
 
-Remove a host, found by name or alias, from whichever inventory holds it. **-i** narrows the search. Its group memberships go with it.
+Remove a host, found by name or alias, from whichever inventory holds it. **-i** narrows the search. A name or alias that more than one host answers to is refused, naming each: **-i**, or a name only one of them has, says which. Its group memberships go with it.
 
 ## group [*NAME*]
 

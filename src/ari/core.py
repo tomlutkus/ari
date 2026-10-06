@@ -201,12 +201,34 @@ def ls_columns(cfg: Config, scope: str | None = None, names: list[str] | None = 
     return columns
 
 
-def _locate(cfg: Config, inventories: dict[str, Inventory], token: str, scope: str | None) -> tuple[Inventory, Host]:
+def _locate(
+    cfg: Config, inventories: dict[str, Inventory], token: str, scope: str | None, by_name: bool = False
+) -> tuple[Inventory, Host]:
+    """The one host token names, in the inventory scope names or in any. A token is a name or an
+    alias, in any case. One that more than one host answers to, as a hand edit or a shared
+    inventory can leave, is refused, naming each, so a command never acts on a host nobody meant.
+    by_name is a host's own name exactly as its record has it, for a caller that holds the record."""
+    found = []
     for ic in cfg.scope(scope):
-        host = inventories[ic.name].find(token)
-        if host:
-            return inventories[ic.name], host
-    raise HostsError(f"no host named {token!r} in " + (scope if scope else "any inventory"))
+        inventory = inventories[ic.name]
+        if by_name:
+            host = inventory.named(token)
+            found += [(inventory, host)] if host else []
+        else:
+            found += [(inventory, h) for h in inventory.hosts if any(t.casefold() == token.casefold() for t in h.tokens())]
+    if not found:
+        raise HostsError(f"no host named {token!r} in " + (scope if scope else "any inventory"))
+    if len(found) > 1:
+        listed = ", ".join(
+            f"{inventory.name}/{host.name} ({'name' if host.name.casefold() == token.casefold() else 'alias'})"
+            for inventory, host in found
+        )
+        across = len({inventory.name for inventory, _ in found}) > 1
+        raise HostsError(
+            f"{token!r} names more than one host: {listed}; use a name or alias only one of them has"
+            + (", or -i to say which inventory" if across else "")
+        )
+    return found[0]
 
 
 def find_host(cfg: Config, token: str, scope: str | None = None) -> tuple[Inventory, Host]:
@@ -1259,22 +1281,25 @@ def add_host(cfg: Config, inventory_name: str, name: str, hostname: str, changes
 
 
 @storage.lock()
-def edit_host(cfg: Config, token: str, changes: Changes, scope: str | None = None) -> tuple[Inventory, Host, bool]:
-    """The host after editing, and whether anything changed."""
+def edit_host(
+    cfg: Config, token: str, changes: Changes, scope: str | None = None, by_name: bool = False
+) -> tuple[Inventory, Host, bool]:
+    """The host after editing, and whether anything changed. by_name as for _locate."""
     if changes.is_empty():
         raise HostsError("nothing to change; pass at least one option")
     inventories = load_all(cfg)
-    inventory, original = _locate(cfg, inventories, token, scope)
+    inventory, original = _locate(cfg, inventories, token, scope, by_name)
     host = copy.deepcopy(original)
     changed = _write(inventories, inventory, original, host, changes)
     return inventory, host, changed
 
 
 @storage.lock()
-def remove_host(cfg: Config, token: str, scope: str | None = None) -> tuple[Inventory, Host]:
-    """Removing a host removes its group memberships with it: they live on the record."""
+def remove_host(cfg: Config, token: str, scope: str | None = None, by_name: bool = False) -> tuple[Inventory, Host]:
+    """Removing a host removes its group memberships with it: they live on the record. by_name as
+    for _locate."""
     inventories = load_all(cfg)
-    inventory, host = _locate(cfg, inventories, token, scope)
+    inventory, host = _locate(cfg, inventories, token, scope, by_name)
     inventory.hosts = [h for h in inventory.hosts if h is not host]
     storage.save(inventory)
     return inventory, host

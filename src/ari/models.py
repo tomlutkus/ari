@@ -330,6 +330,10 @@ class Inventory:
                 return host
         return None
 
+    def named(self, name: str) -> Host | None:
+        """The host whose own name is exactly name: the record a caller already holds, never a token typed."""
+        return next((host for host in self.hosts if host.name == name), None)
+
     # Effective values: the host's own, else the inventory default. A user of None means
     # "no User line": ssh picks the login of whoever connects, on whichever machine.
 

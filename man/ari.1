@@ -96,6 +96,13 @@ Every generated file lands in one ssh
 namespace where the first match wins, so
 a duplicate would silently shadow a
 host.
+An inventory edited by hand, or shared
+through \f[B]file\f[R], can still break
+the rule: export refuses it, and
+\f[B]show\f[R], \f[B]edit\f[R] and
+\f[B]rm\f[R] refuse a name or alias that
+more than one host answers to, naming
+each, rather than act on the first.
 .PP
 Generated files are output, not
 something to edit.
@@ -544,6 +551,10 @@ nothing.
 Remove a host, found by name or alias,
 from whichever inventory holds it.
 \f[B]-i\f[R] narrows the search.
+A name or alias that more than one host
+answers to is refused, naming each:
+\f[B]-i\f[R], or a name only one of them
+has, says which.
 Its group memberships go with it.
 .SS group [\f[I]NAME\f[R]]
 .PP
