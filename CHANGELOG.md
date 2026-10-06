@@ -2,7 +2,7 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
-## Unreleased
+## 0.10.0 (2026-10-06)
 
 - `authorized_keys = true` in an inventory's `ansible` table lists public keys in the hosts file as `ari_authorized_keys`, for `ansible.posix.authorized_key` to deploy: the `pub` of every key ssh offers a host, in order. The defaults' list goes in `all.vars` and a host gets its own only where its keys make a different one, as with `ansible_ssh_private_key_file`. Export refuses a key the var would list without a `pub`, naming the `ari key NAME --pub` that fills it. It's off by default, and off, every file stays the same.
 - ansible import checks `ari_authorized_keys` against the `pub` of each host's keys and stores nothing from it, so re-importing what export wrote with it on is unchanged. Another key, or a key without a `pub`, is a conflict on a host already in the inventory; on a new host the list is reported as not imported. The same keys under other comments are reported and the inventory's kept. When the source has the var, the table import prints for config.toml turns `authorized_keys` on.
