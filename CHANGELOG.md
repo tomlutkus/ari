@@ -2,6 +2,10 @@
 
 Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
 
+## Unreleased
+
+- Documentation fixes. Installing a third-party module was given as `uv tool install ari --with PACKAGE`, which installs an unrelated `ari` from PyPI; it's `uv tool install --python 3.14 --with PACKAGE git+https://github.com/tomlutkus/ari`. The manual now lists `key NAME` among the commands that pick one inventory and `key` among those that cover all of them, says names are unique ignoring case by ari's own rule, since ssh matches Host tokens as typed, says a version 1 file's Ansible opt-out becomes `exclude`, names the table module beside ssh and ansible, and lists STATE's `no home`. `--help` names the table output too.
+
 ## 0.10.0 (2026-10-06)
 
 - `authorized_keys = true` in an inventory's `ansible` table lists public keys in the hosts file as `ari_authorized_keys`, for `ansible.posix.authorized_key` to deploy: the `pub` of every key ssh offers a host, in order. The defaults' list goes in `all.vars` and a host gets its own only where its keys make a different one, as with `ansible_ssh_private_key_file`. Export refuses a key the var would list without a `pub`, naming the `ari key NAME --pub` that fills it. It's off by default, and off, every file stays the same.

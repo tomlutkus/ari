@@ -20,8 +20,8 @@
 .SH NAME
 .PP
 ari - keep SSH hosts in one place and
-generate ssh config and Ansible
-inventory from them
+generate ssh config, Ansible inventory
+and host tables from them
 .SH SYNOPSIS
 .PP
 \f[B]ari\f[R] [\f[B]-i\f[R]
@@ -80,7 +80,9 @@ The built-in \f[B]ssh\f[R] module
 imports and writes OpenSSH client
 config; the built-in \f[B]ansible\f[R]
 module imports and writes an Ansible
-YAML inventory.
+YAML inventory; the built-in
+\f[B]table\f[R] module writes Markdown
+or CSV tables of the hosts.
 .PP
 Group membership lives on the host
 record, so removing a host removes it
@@ -88,8 +90,8 @@ from every group, and no group can name
 a host that doesn\[aq]t exist.
 .PP
 Names and aliases are unique across all
-inventories, compared case-insensitively
-the way ssh compares them.
+inventories, ignoring case, so no two
+differ only in case.
 Every generated file lands in one ssh
 namespace where the first match wins, so
 a duplicate would silently shadow a
@@ -298,9 +300,9 @@ T}
 .TE
 .PP
 A list shows its values joined by a
-comma and a space, and an empty value
-shows as \f[B]-\f[R].
-On screen, aliases, keys, groups,
+comma and a space.
+On screen, an empty value shows as
+\f[B]-\f[R], and aliases, keys, groups,
 exclude and notes share the width the
 other columns leave, the widest giving
 way first and none below its heading, so
@@ -311,7 +313,8 @@ The other columns are never cut, as for
 GROUPS above.
 .PP
 With \f[B]--format\f[R], every value is
-whole and nothing is dimmed or cut.
+whole, an empty one is left empty, and
+nothing is dimmed or cut.
 \f[B]md\f[R] prints a heading row, a
 separator, then one line per host, with
 a value\[aq]s lines joined by
@@ -672,9 +675,11 @@ one file shows only why:
 \f[B]relative\f[R], \f[B]tokens\f[R] for
 one with \f[V]%\f[R] or \f[V]${\f[R],
 which can name a different file per
-host, and \f[B]no user\f[R]
-\f[I]NAME\f[R] for a \f[V]\[ti]user\f[R]
-the system doesn\[aq]t know.
+host, \f[B]no user\f[R] \f[I]NAME\f[R]
+for a \f[V]\[ti]user\f[R] the system
+doesn\[aq]t know, and \f[B]no home\f[R]
+when the password database has no entry
+for you.
 A file ssh can\[aq]t read shows only
 \f[B]missing\f[R], \f[B]unreadable\f[R]
 or \f[B]not a file\f[R].
@@ -830,8 +835,7 @@ never sees it, then stores the new
 \f[I]PATH\f[R]\f[V].pub\f[R] line as
 \f[B]pub\f[R].
 With \f[B]--path\f[R] it declares or
-moves the key first, in the same
-command.
+moves the key in the same command.
 It needs a terminal, and everything is
 checked before ssh-keygen runs, so a
 refusal leaves no key behind: the path
@@ -897,8 +901,9 @@ Importing into an empty inventory sets
 its defaults: from the source\[aq]s own
 defaults when it has them, like
 Ansible\[aq]s \f[B]all.vars\f[R],
-otherwise to the user and key most hosts
-share.
+otherwise to the user and the keys most
+hosts share, when at least two share
+them.
 Each host stores only what differs.
 An inventory with hosts or defaults
 keeps its own, and a host that leaves a
@@ -1057,11 +1062,11 @@ has none, is compared in order with the
 \f[B]pub\f[R] of the keys the host ends
 up with, on the key and not its comment.
 On a host already in the inventory,
-another key, or a key without a
-\f[B]pub\f[R], is a conflict; a new host
-is added and its list reported as not
-imported, since import never sets a
-\f[B]pub\f[R].
+another key, a key without a
+\f[B]pub\f[R] or a different number of
+keys is a conflict; a new host is added
+and its list reported as not imported,
+since import never sets a \f[B]pub\f[R].
 The same keys under other comments are
 reported and the inventory\[aq]s kept.
 Any of these leaves the files unadopted.
@@ -1392,19 +1397,21 @@ Show the version
 T}
 .TE
 .PP
-\f[B]add\f[R], \f[B]import\f[R] and
-\f[B]group\f[R] \f[I]NAME\f[R] write to
+\f[B]add\f[R], \f[B]import\f[R],
+\f[B]group\f[R] \f[I]NAME\f[R] and
+\f[B]key\f[R] \f[I]NAME\f[R] write to
 one inventory: \f[B]-i\f[R], then
 \f[B]ARI_INVENTORY\f[R], then
 \f[B]default\f[R] from config.toml,
 which is also where the TUI\[aq]s add
 form starts.
 The TUI, \f[B]ls\f[R], \f[B]show\f[R],
-\f[B]export\f[R] and \f[B]group\f[R]
-without a name cover every inventory
-unless \f[B]-i\f[R] narrows them, and
-\f[B]edit\f[R] and \f[B]rm\f[R] find the
-host wherever it is.
+\f[B]export\f[R], and \f[B]group\f[R]
+and \f[B]key\f[R] without a name cover
+every inventory unless \f[B]-i\f[R]
+narrows them, and \f[B]edit\f[R] and
+\f[B]rm\f[R] find the host wherever it
+is.
 An inventory \f[B]-i\f[R] names that
 config.toml doesn\[aq]t declare is an
 error.
@@ -1462,6 +1469,7 @@ T{
 T}@T{
 Inventory used by \f[B]add\f[R],
 \f[B]import\f[R], \f[B]group\f[R]
+\f[I]NAME\f[R], \f[B]key\f[R]
 \f[I]NAME\f[R] and the TUI\[aq]s add
 form when \f[B]-i\f[R] and
 \f[B]ARI_INVENTORY\f[R] are unset
@@ -1567,8 +1575,11 @@ modules register there like any other.
 A third-party module is a package that
 registers in that group; install it into
 ari\[aq]s environment with \f[B]uv tool
-install ari --with\f[R]
-\f[I]PACKAGE\f[R].
+install --python 3.14 --with\f[R]
+\f[I]PACKAGE\f[R]
+\f[B]git+https://github.com/tomlutkus/ari\f[R].
+The \f[B]ari\f[R] on PyPI is another
+project.
 .SH INVENTORY FILES
 .PP
 Each inventory is one JSON file.
@@ -1745,8 +1756,9 @@ Older files are upgraded when
 they\[aq]re read and saved as version 3
 on their next write.
 A version 1 file, from ari 0.2, moves
-its ssh options and Ansible opt-out
-under \f[B]modules\f[R].
+its ssh options under \f[B]modules\f[R]
+and its Ansible opt-out to
+\f[B]exclude\f[R].
 A version 2 file, up to ari 0.6, keeps
 one key path per host and in the
 defaults; each path becomes a declared
@@ -1796,9 +1808,10 @@ it covers before writing anything.
 Beyond names, keys, groups and reasons,
 including the keys the defaults list,
 every child group must be declared,
-children may not form a cycle, and no
-alias may be its host\[aq]s own name in
-another case.
+children may not form a cycle, no alias
+may be its host\[aq]s own name in
+another case, and no two outputs may
+write the same file.
 The \f[B]ansible\f[R] module adds its
 own rules: every declared group is a
 valid Ansible group name and matches
@@ -1817,8 +1830,9 @@ Each block gets \f[B]HostName\f[R],
 \f[B]Port\f[R] when it isn\[aq]t 22, an
 \f[B]IdentityFile\f[R] for each of its
 keys in order, then \f[B]IdentitiesOnly
-yes\f[R] once when there is a key,
-followed by the host\[aq]s other
+yes\f[R] once when there is a key and
+the host doesn\[aq]t set IdentitiesOnly
+itself, followed by the host\[aq]s other
 options, one line for each value of a
 list.
 There are no \f[V]Host *\f[R] blocks:
@@ -2064,6 +2078,7 @@ T{
 T}@T{
 Inventory for \f[B]add\f[R],
 \f[B]import\f[R], \f[B]group\f[R]
+\f[I]NAME\f[R], \f[B]key\f[R]
 \f[I]NAME\f[R] and the TUI\[aq]s add
 form when \f[B]-i\f[R] is not given
 T}

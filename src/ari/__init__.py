@@ -1,4 +1,4 @@
-"""ari: one record per SSH host, exported to ssh config and Ansible inventory."""
+"""ari: one record per SSH host, exported to ssh config, Ansible inventory and host tables."""
 
 from importlib.metadata import PackageNotFoundError, version
 

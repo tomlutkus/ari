@@ -8,7 +8,7 @@ date: October 2026
 
 # NAME
 
-ari - keep SSH hosts in one place and generate ssh config and Ansible inventory from them
+ari - keep SSH hosts in one place and generate ssh config, Ansible inventory and host tables from them
 
 # SYNOPSIS
 
@@ -40,11 +40,11 @@ ari - keep SSH hosts in one place and generate ssh config and Ansible inventory 
 
 # DESCRIPTION
 
-**ari** keeps one record per SSH host in JSON inventories and generates files from them through modules. Each inventory, such as *personal* or *work*, is declared in **config.toml** with the modules it uses. The built-in **ssh** module imports and writes OpenSSH client config; the built-in **ansible** module imports and writes an Ansible YAML inventory.
+**ari** keeps one record per SSH host in JSON inventories and generates files from them through modules. Each inventory, such as *personal* or *work*, is declared in **config.toml** with the modules it uses. The built-in **ssh** module imports and writes OpenSSH client config; the built-in **ansible** module imports and writes an Ansible YAML inventory; the built-in **table** module writes Markdown or CSV tables of the hosts.
 
 Group membership lives on the host record, so removing a host removes it from every group, and no group can name a host that doesn't exist.
 
-Names and aliases are unique across all inventories, compared case-insensitively the way ssh compares them. Every generated file lands in one ssh namespace where the first match wins, so a duplicate would silently shadow a host.
+Names and aliases are unique across all inventories, ignoring case, so no two differ only in case. Every generated file lands in one ssh namespace where the first match wins, so a duplicate would silently shadow a host.
 
 Generated files are output, not something to edit. **ari** records a hash of every file it writes and refuses to overwrite one that changed since.
 
@@ -101,9 +101,9 @@ GROUPS shows as many of a host's groups as fit beside the other columns, in the 
 | **exclude** | The modules it stays out of |
 | **inv** | Its inventory |
 
-A list shows its values joined by a comma and a space, and an empty value shows as **-**. On screen, aliases, keys, groups, exclude and notes share the width the other columns leave, the widest giving way first and none below its heading, so a row never wraps: a list shows as many values as fit, then +*N*, and notes show their first line, cut short. The other columns are never cut, as for GROUPS above.
+A list shows its values joined by a comma and a space. On screen, an empty value shows as **-**, and aliases, keys, groups, exclude and notes share the width the other columns leave, the widest giving way first and none below its heading, so a row never wraps: a list shows as many values as fit, then +*N*, and notes show their first line, cut short. The other columns are never cut, as for GROUPS above.
 
-With **--format**, every value is whole and nothing is dimmed or cut. **md** prints a heading row, a separator, then one line per host, with a value's lines joined by `<br>` and every `|` escaped as `\|`. **csv** prints a header of column names, then one row per host, each line ending in a newline; a value holding a comma, a quote or a line break is quoted, its line breaks kept. Hosts come in the order **ls** lists them, and with none only the heading prints. Without **--columns**, both take the usual ones.
+With **--format**, every value is whole, an empty one is left empty, and nothing is dimmed or cut. **md** prints a heading row, a separator, then one line per host, with a value's lines joined by `<br>` and every `|` escaped as `\|`. **csv** prints a header of column names, then one row per host, each line ending in a newline; a value holding a comma, a quote or a line break is quoted, its line breaks kept. Hosts come in the order **ls** lists them, and with none only the heading prints. Without **--columns**, both take the usual ones.
 
 ## show *NAME*
 
@@ -170,7 +170,7 @@ The other checks match **add** and **edit**: every child is declared, children f
 
 Without *NAME*, list the declared keys of every inventory, or only the one named with **-i**, in the order they're declared. HOSTS counts the hosts ssh offers the key to, including those that take it from the defaults, with the hosts that list it themselves beside it when the two differ. Every column is whole: when the table doesn't fit, its rows run past the edge, so a name or a path never reads cut short.
 
-STATE says what ssh, run by you on this machine, would find at the key's path: **ok** when nothing is wrong, otherwise every problem, comma separated. The path is resolved as ssh resolves IdentityFile: `~` and `~user` through the password database, and a relative path from wherever ssh runs. A path **ari** can't turn into one file shows only why: **relative**, **tokens** for one with `%` or `${`, which can name a different file per host, and **no user** *NAME* for a `~user` the system doesn't know. A file ssh can't read shows only **missing**, **unreadable** or **not a file**. Otherwise:
+STATE says what ssh, run by you on this machine, would find at the key's path: **ok** when nothing is wrong, otherwise every problem, comma separated. The path is resolved as ssh resolves IdentityFile: `~` and `~user` through the password database, and a relative path from wherever ssh runs. A path **ari** can't turn into one file shows only why: **relative**, **tokens** for one with `%` or `${`, which can name a different file per host, **no user** *NAME* for a `~user` the system doesn't know, and **no home** when the password database has no entry for you. A file ssh can't read shows only **missing**, **unreadable** or **not a file**. Otherwise:
 
 | State | Meaning |
 |-------|-------------|
@@ -196,7 +196,7 @@ With *NAME*, declare that key in one inventory, **-i**, then **ARI_INVENTORY**, 
 
 Two keys in one inventory can't share a file, since **--key** *PATH* has to name one of them. **--rm** is refused while the defaults or any host list the key, naming them, and nothing is saved. A command that changes nothing saves nothing.
 
-**--new** runs `ssh-keygen -t ed25519 -f` *PATH* `-C "`*NAME* *USER*`@`*HOST*`"` on the terminal, so ssh-keygen asks for the passphrase itself and **ari** never sees it, then stores the new *PATH*`.pub` line as **pub**. With **--path** it declares or moves the key first, in the same command. It needs a terminal, and everything is checked before ssh-keygen runs, so a refusal leaves no key behind: the path has to be one **ari** can name in your own home or elsewhere, its directory has to exist, and *PATH*, *PATH*`.pub` and *PATH*`-cert.pub` must all be free. ssh-keygen only asks before replacing the private key and writes the `.pub` over whatever is there, and an old `.pub` can be the last trace of a key a server still trusts, so **ari** never removes or overwrites key files: move them away first. If ssh-keygen fails or is interrupted, or doesn't leave a matching pair, nothing is saved.
+**--new** runs `ssh-keygen -t ed25519 -f` *PATH* `-C "`*NAME* *USER*`@`*HOST*`"` on the terminal, so ssh-keygen asks for the passphrase itself and **ari** never sees it, then stores the new *PATH*`.pub` line as **pub**. With **--path** it declares or moves the key in the same command. It needs a terminal, and everything is checked before ssh-keygen runs, so a refusal leaves no key behind: the path has to be one **ari** can name in your own home or elsewhere, its directory has to exist, and *PATH*, *PATH*`.pub` and *PATH*`-cert.pub` must all be free. ssh-keygen only asks before replacing the private key and writes the `.pub` over whatever is there, and an old `.pub` can be the last trace of a key a server still trusts, so **ari** never removes or overwrites key files: move them away first. If ssh-keygen fails or is interrupted, or doesn't leave a matching pair, nothing is saved.
 
 **--pub** stores the key file's public half: the *PATH*`.pub` line, comment included, when it holds this key, otherwise the key type and key read from the private key file. A key **ari** can't read, or a PEM key, whose public half needs its passphrase, is refused and nothing is saved.
 
@@ -208,7 +208,7 @@ List the installed modules, whether each can import and export, and which invent
 
 Read hosts into one inventory through *MODULE*. Every host goes through the same checks as **add**: one that fails is refused and reported, and the rest still import. A host already in the inventory is merged: new aliases, groups, options and missing notes are added. A value the source sets differently, whether HostName, User, Port, IdentityFile, notes or an ssh option such as ProxyJump, is a conflict, and that host is left alone. Hosts that merged are saved even when others conflicted or were refused; the exit status is then 1.
 
-Importing into an empty inventory sets its defaults: from the source's own defaults when it has them, like Ansible's **all.vars**, otherwise to the user and key most hosts share. Each host stores only what differs. An inventory with hosts or defaults keeps its own, and a host that leaves a field to the source's defaults takes the source's value, stored where it differs from the inventory's. A host already in the inventory whose value would change that way is a conflict, and the warning names the hosts that were given one.
+Importing into an empty inventory sets its defaults: from the source's own defaults when it has them, like Ansible's **all.vars**, otherwise to the user and the keys most hosts share, when at least two share them. Each host stores only what differs. An inventory with hosts or defaults keeps its own, and a host that leaves a field to the source's defaults takes the source's value, stored where it differs from the inventory's. A host already in the inventory whose value would change that way is a conflict, and the warning names the hosts that were given one.
 
 A clean import adopts the files it read: their hashes go to the guard, so exporting over them afterwards passes. If anything conflicted, was refused, or couldn't be represented, such as a skipped `Host *` block, the files are not adopted, and an export over one of them needs **--force** once you've checked it.
 
@@ -220,7 +220,7 @@ Each key file the source names becomes the inventory's key at that path. A path 
 
 With the **ssh** module, *SOURCE* is a config file. The first token on a Host line becomes the name and the rest become aliases. A block without **HostName** is read the way ssh reads it, which connects to whichever token was typed: each token becomes a host of its own, connecting to its own name, with the block's user, port, key and options. A block for a host the inventory already has, a later block in the same file or the same host on re-import, compares and fills only what it sets, so without **HostName** or **Port** it can still add a user, key, alias or option. A new host without **Port** gets 22, ssh's own default, stored only when the inventory's default port differs. **HostName**, **User** and **Port** become fields, each **IdentityFile** one of the host's keys in order, and every other keyword is kept as an ssh option, in order. Export writes **IdentitiesOnly yes** after the keys unless the host sets IdentitiesOnly itself, so a block with a key and no IdentitiesOnly is stored with **IdentitiesOnly no**, which is what ssh did with it. Pattern Host blocks, Match blocks, Include lines and options outside any Host block are skipped with a warning. When a keyword repeats inside a block, ssh uses the first value and so does ari, except for **IdentityFile**, **CertificateFile**, **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv**: ssh uses every one of those, and so does ari, as a list. ssh also adds those from every later block a name matches, so a later block naming every token a host has, exactly as written, since ssh matches Host tokens case and all, adds its keys and lines of those keywords after the host's own, and IdentitiesOnly is the first block's that sets it. A block whose Host line leaves out a name the host answers to, or writes one in another case, applies only to the names it has, which one record can't hold. Whether it comes later in the same file or in a later import, it can still add aliases, and anything else it would change is a conflict: its keys and lines of those keywords are compared, and a setting it would fill is refused. A block without **User** stays without one, so ssh uses whoever connects. Point **ssh.path** only at a file ari owns: an Include, Match or `Host *` in it would be gone after the next export.
 
-With the **ansible** module, *SOURCE* is an inventory directory, and every **.yml** and **.yaml** file at its top level is read. **all.vars** become the defaults, each host's **ansible_host**, **ansible_user**, **ansible_port**, **ansible_ssh_private_key_file** and **description** become its fields, and group membership, child groups and the file each group came from carry over. **ansible_host** and **description** must be strings: YAML reads `ansible_host: no` as false, so a host like that is skipped and a description like that left out, each reported. A quoted **ansible_port** such as `"2222"` is the number, as Ansible reads it. **ansible_ssh_private_key_file** names only a host's first key, so it agrees with a record whose keys start with that file: re-importing what export wrote for a host with several keys changes nothing, and a new host naming the first of the defaults' keys takes their whole list. **ari_authorized_keys** is checked and never stored: each host's list, or the one in **all.vars** when it has none, is compared in order with the **pub** of the keys the host ends up with, on the key and not its comment. On a host already in the inventory, another key, or a key without a **pub**, is a conflict; a new host is added and its list reported as not imported, since import never sets a **pub**. The same keys under other comments are reported and the inventory's kept. Any of these leaves the files unadopted. When the source has the var, the table import prints turns **authorized_keys** on. Anything else is reported as not imported: other vars, group vars, and members that no hosts section defines. Comments are read by nothing and listed with their file and line, so zone headers and reasons can be put back with **ari group**. When the inventory has no **ansible** table yet, import prints one to paste into config.toml, with each file's groups listed by name. Export writes the hosts file with hosts only, so groups defined there get a file of their own in that table, named in a warning. The groups the source brings get the check **group** runs: if they would add a cycle or an undeclared child, the problem is refused and the inventory's groups stay as they were, and a host in a group that didn't get declared is refused with it.
+With the **ansible** module, *SOURCE* is an inventory directory, and every **.yml** and **.yaml** file at its top level is read. **all.vars** become the defaults, each host's **ansible_host**, **ansible_user**, **ansible_port**, **ansible_ssh_private_key_file** and **description** become its fields, and group membership, child groups and the file each group came from carry over. **ansible_host** and **description** must be strings: YAML reads `ansible_host: no` as false, so a host like that is skipped and a description like that left out, each reported. A quoted **ansible_port** such as `"2222"` is the number, as Ansible reads it. **ansible_ssh_private_key_file** names only a host's first key, so it agrees with a record whose keys start with that file: re-importing what export wrote for a host with several keys changes nothing, and a new host naming the first of the defaults' keys takes their whole list. **ari_authorized_keys** is checked and never stored: each host's list, or the one in **all.vars** when it has none, is compared in order with the **pub** of the keys the host ends up with, on the key and not its comment. On a host already in the inventory, another key, a key without a **pub** or a different number of keys is a conflict; a new host is added and its list reported as not imported, since import never sets a **pub**. The same keys under other comments are reported and the inventory's kept. Any of these leaves the files unadopted. When the source has the var, the table import prints turns **authorized_keys** on. Anything else is reported as not imported: other vars, group vars, and members that no hosts section defines. Comments are read by nothing and listed with their file and line, so zone headers and reasons can be put back with **ari group**. When the inventory has no **ansible** table yet, import prints one to paste into config.toml, with each file's groups listed by name. Export writes the hosts file with hosts only, so groups defined there get a file of their own in that table, named in a warning. The groups the source brings get the check **group** runs: if they would add a cycle or an undeclared child, the problem is refused and the inventory's groups stay as they were, and a host in a group that didn't get declared is refused with it.
 
 ## export [*MODULE* ...]
 
@@ -267,7 +267,7 @@ The group picker lists the inventory's declared groups in the order they're decl
 | **-h**, **--help** | Show help for **ari** or for one command |
 | **--version** | Show the version |
 
-**add**, **import** and **group** *NAME* write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml, which is also where the TUI's add form starts. The TUI, **ls**, **show**, **export** and **group** without a name cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
+**add**, **import**, **group** *NAME* and **key** *NAME* write to one inventory: **-i**, then **ARI_INVENTORY**, then **default** from config.toml, which is also where the TUI's add form starts. The TUI, **ls**, **show**, **export**, and **group** and **key** without a name cover every inventory unless **-i** narrows them, and **edit** and **rm** find the host wherever it is. An inventory **-i** names that config.toml doesn't declare is an error.
 
 # CONFIGURATION
 
@@ -301,7 +301,7 @@ columns = ["name", "hostname", "os", "groups", "notes"]
 
 | Key | Meaning |
 |-------------|------------|
-| **default** | Inventory used by **add**, **import**, **group** *NAME* and the TUI's add form when **-i** and **ARI_INVENTORY** are unset |
+| **default** | Inventory used by **add**, **import**, **group** *NAME*, **key** *NAME* and the TUI's add form when **-i** and **ARI_INVENTORY** are unset |
 | `inventories.NAME.file` | Inventory data; defaults to `NAME.json` beside config.toml |
 | `inventories.NAME.MODULE` | A module this inventory uses, with that module's settings |
 | `inventories.NAME.MODULE.enabled` | **false** parks the module without losing its settings |
@@ -325,7 +325,7 @@ Include config.d/*.conf
 
 A module turns an inventory into files, reads a source into hosts, or both. Modules never write to disk themselves: they hand **ari** paths and contents, and **ari** does the writing, so the guard, the atomic writes and the all-or-nothing validation cover every module the same way. A host that lists a module in **exclude** never reaches it.
 
-Modules are found through the Python entry point group **ari.modules**. The built-in **ssh**, **ansible** and **table** modules register there like any other. A third-party module is a package that registers in that group; install it into ari's environment with **uv tool install ari --with** *PACKAGE*.
+Modules are found through the Python entry point group **ari.modules**. The built-in **ssh**, **ansible** and **table** modules register there like any other. A third-party module is a package that registers in that group; install it into ari's environment with **uv tool install --python 3.14 --with** *PACKAGE* **git+https://github.com/tomlutkus/ari**. The **ari** on PyPI is another project.
 
 # INVENTORY FILES
 
@@ -382,7 +382,7 @@ Every key a host or the defaults list is declared under **keys**, by a name with
 
 Options take a string. **CertificateFile**, **LocalForward**, **RemoteForward**, **DynamicForward** and **SendEnv** can also take a list, since ssh uses every line of those; any other keyword uses only its first line, so a list there doesn't load. A list of one is stored as its string. A host's value for a keyword replaces the default's, lists included.
 
-Data for a module that isn't installed is kept as it is, so removing a plugin never loses anything. Older files are upgraded when they're read and saved as version 3 on their next write. A version 1 file, from ari 0.2, moves its ssh options and Ansible opt-out under **modules**. A version 2 file, up to ari 0.6, keeps one key path per host and in the defaults; each path becomes a declared key named after the file's stem, numbered when two files share one, so every generated file stays byte for byte the same.
+Data for a module that isn't installed is kept as it is, so removing a plugin never loses anything. Older files are upgraded when they're read and saved as version 3 on their next write. A version 1 file, from ari 0.2, moves its ssh options under **modules** and its Ansible opt-out to **exclude**. A version 2 file, up to ari 0.6, keeps one key path per host and in the defaults; each path becomes a declared key named after the file's stem, numbered when two files share one, so every generated file stays byte for byte the same.
 
 A file that fails to parse stops **ari** with the path and the error. It is never treated as empty. Two ssh options that differ only in case are one keyword to ssh, so a file that holds both doesn't load.
 
@@ -392,11 +392,11 @@ A file that fails to parse stops **ari** with the path and the error. It is neve
 
 **group** checks the group it writes the same way: a new name is usable, every child is declared, children form no cycle, and nothing a host relies on is removed. Only problems the write would add stop it; one already elsewhere in the inventory doesn't.
 
-**export** checks every inventory it covers before writing anything. Beyond names, keys, groups and reasons, including the keys the defaults list, every child group must be declared, children may not form a cycle, and no alias may be its host's own name in another case. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table; when **zones** is set, every host it exports is in exactly one zone; and with **authorized_keys** on, every key **ari_authorized_keys** would list has a **pub**.
+**export** checks every inventory it covers before writing anything. Beyond names, keys, groups and reasons, including the keys the defaults list, every child group must be declared, children may not form a cycle, no alias may be its host's own name in another case, and no two outputs may write the same file. The **ansible** module adds its own rules: every declared group is a valid Ansible group name and matches exactly one entry in the **groups** table; when **zones** is set, every host it exports is in exactly one zone; and with **authorized_keys** on, every key **ari_authorized_keys** would list has a **pub**.
 
 # GENERATED SSH CONFIG
 
-Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, an **IdentityFile** for each of its keys in order, then **IdentitiesOnly yes** once when there is a key, followed by the host's other options, one line for each value of a list. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
+Hosts are sorted by name. Each block gets **HostName**, **User** when one is set, **Port** when it isn't 22, an **IdentityFile** for each of its keys in order, then **IdentitiesOnly yes** once when there is a key and the host doesn't set IdentitiesOnly itself, followed by the host's other options, one line for each value of a list. There are no `Host *` blocks: they ignore file boundaries, and **IdentityFile** accumulates across matching blocks, so a default in one file would offer its key to every host.
 
 Every write goes to `FILE.tmp` beside the target and is then renamed over it. `Include config.d/*.conf` never matches the `.tmp`, so ssh never reads a half-written file. The file gets mode 0600, as do the inventories, and a directory **ari** creates for them gets 0700.
 
@@ -449,7 +449,7 @@ A file holds what **ls -i** *NAME* **--format** prints for those columns: every 
 
 | Variable | Effect |
 |-------|-------------|
-| **ARI_INVENTORY** | Inventory for **add**, **import**, **group** *NAME* and the TUI's add form when **-i** is not given |
+| **ARI_INVENTORY** | Inventory for **add**, **import**, **group** *NAME*, **key** *NAME* and the TUI's add form when **-i** is not given |
 | **XDG_CONFIG_HOME** | Where config.toml and inventories live |
 | **XDG_STATE_HOME** | Where the guard state lives |
 

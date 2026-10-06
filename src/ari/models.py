@@ -323,7 +323,7 @@ class Inventory:
     keys: dict[str, KeyDef] = field(default_factory=dict)
 
     def find(self, token: str) -> Host | None:
-        """A host by name or alias, compared the way ssh does: case-insensitively."""
+        """A host by name or alias, ignoring case: no two names differ only in case."""
         key = token.casefold()
         for host in self.hosts:
             if any(t.casefold() == key for t in host.tokens()):

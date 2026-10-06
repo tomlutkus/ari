@@ -2,7 +2,7 @@
 
 <img src="docs/ari_logo.png" alt="ari" width="200">
 
-**One record per SSH host. ssh config and Ansible inventory, built from it.**
+**One record per SSH host. ssh config, Ansible inventory and host tables, built from it.**
 
 ![Python 3.14](https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white)
 ![Packaged with uv](https://img.shields.io/badge/packaged%20with-uv-261230)
@@ -80,7 +80,7 @@ all:
       ansible_port: 2222
 ```
 
-Run `ari` on its own and the same list opens as a TUI. Type `/` to filter, Enter for a host's details, `s` to ssh straight into any host the generated ssh config holds and come back when the session ends, and `a`, `e`, `g`, `d` and `x` to add, edit, regroup, delete and export without leaving it. Every change goes through the same checks as the commands.
+Run `ari` on its own and the same list opens as a TUI. Type `/` to filter, Enter for a host's details, `s` to ssh straight into any host the generated ssh config holds and come back when the session ends, `a`, `e`, `g`, `d` and `x` to add, edit, regroup, delete and export without leaving it, and `k` for the keys and the hosts using each. Every change goes through the same checks as the commands.
 
 ## How it stays safe
 
@@ -96,10 +96,10 @@ Every host is written out in full, with no `Host *` blocks. Those ignore file bo
 
 Every format is a module: one table per module in each inventory's config, and `enabled = false` parks one without losing its settings. Three are built in. `ssh` imports and writes OpenSSH client config. `ansible` imports and writes an Ansible YAML inventory with its own small emitter, so zone headers and reason comments survive and the same data always gives the same bytes. `table` writes Markdown or CSV tables of an inventory's hosts, each with the columns you name, the same bytes `ls --format` prints for them. Modules hand ari paths and contents and never touch the disk themselves, so the guard and the atomic writes cover all of them.
 
-Modules are found through the `ari.modules` entry point group, the built-in ones included. A third-party module is a package that registers there:
+Modules are found through the `ari.modules` entry point group, the built-in ones included. A third-party module is a package that registers there, installed into ari's environment (the `ari` on PyPI is another project):
 
 ```console
-$ uv tool install ari --with PACKAGE
+$ uv tool install --python 3.14 --with PACKAGE git+https://github.com/tomlutkus/ari
 $ ari modules
 ```
 
@@ -204,7 +204,7 @@ $ make check
 
 `make check` runs the tests, then fails if `man/ari.1` no longer matches `docs/ari.1.md`. `make man` regenerates it with pandoc. The ssh and Ansible tests compare `ssh -G` and `ansible-inventory --list` output when those tools are installed, and skip otherwise.
 
-A release bumps `version` in `pyproject.toml` and the footer in `docs/ari.1.md`, adds its entry to [CHANGELOG.md](CHANGELOG.md), passes `make check`, which fails if any of the three disagree, and gets a `vX.Y.Z` tag.
+A release bumps `version` in `pyproject.toml` and `uv.lock` and the footer in `docs/ari.1.md`, adds its entry to [CHANGELOG.md](CHANGELOG.md), passes `make check`, which fails if `pyproject.toml`, the footer and the changelog disagree, and gets a `vX.Y.Z` tag.
 
 Tests run on sanitized fixtures only: documentation addresses from RFC 5737 and invented names. Real inventories never belong in this repo.
 

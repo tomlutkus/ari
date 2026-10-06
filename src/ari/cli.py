@@ -1,4 +1,4 @@
-"""ari: keep your SSH hosts in one place, export ssh config and Ansible inventory."""
+"""ari: keep your SSH hosts in one place, export ssh config, Ansible inventory and host tables."""
 
 import argparse
 import getpass
@@ -421,7 +421,11 @@ def _host_options(p: argparse.ArgumentParser, edit: bool) -> None:
     p.add_argument(
         "--os", metavar="TEXT", help="what the host runs, as you'd write it: 'Ubuntu 24.04'" + ("; '' clears it" if edit else "")
     )
-    p.add_argument("--notes", metavar="TEXT", help="free text, a comment above the Host block")
+    p.add_argument(
+        "--notes",
+        metavar="TEXT",
+        help="free text, a comment above the Host block and the Ansible description" + ("; '' clears it" if edit else ""),
+    )
     p.add_argument("--alias", metavar="ALIAS", action="append", default=[], help="another name; repeatable")
     p.add_argument(
         "--opt",
@@ -457,7 +461,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ari",
         parents=[common],
-        description="Keep SSH hosts in one place; export ssh config and Ansible inventory from it.",
+        description="Keep SSH hosts in one place; export ssh config, Ansible inventory and host tables from it.",
         epilog="With no command on a terminal, ari opens the TUI. See ari(1).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -468,7 +472,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ls = sub.add_parser("ls", parents=[common], help="list hosts across inventories")
     ls.add_argument(
-        "--search", metavar="TEXT", help="match any field, effective user, port and key included; case-insensitive"
+        "--search", metavar="TEXT", help="match any field, effective user, port and keys included; case-insensitive"
     )
     ls.add_argument("--group", metavar="GROUP", help="only hosts in this group")
     ls.add_argument(
@@ -529,13 +533,13 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("module", metavar="MODULE", help="module to read with, e.g. ssh")
     imp.add_argument("source", metavar="SOURCE", nargs="?", help="what to read, e.g. an ssh config file")
     imp.add_argument(
-        "--exclude", metavar="MODULE", action="append", default=[], help="keep imported hosts out of MODULE's output"
+        "--exclude", metavar="MODULE", action="append", default=[], help="keep imported hosts out of MODULE's output; repeatable"
     )
     imp.set_defaults(func=cmd_import)
 
     exp = sub.add_parser("export", parents=[common], help="write the generated files")
     exp.add_argument("modules", metavar="MODULE", nargs="*", help="only these modules (default: all enabled)")
-    exp.add_argument("--force", action="store_true", help="overwrite files edited since the last export")
+    exp.add_argument("--force", action="store_true", help="overwrite files edited since the last export, or not written by ari")
     exp.set_defaults(func=cmd_export)
 
     return parser

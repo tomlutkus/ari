@@ -18,7 +18,7 @@ STARTER = """\
 # ari init wrote this once. From here on it's yours: ari reads it and never writes it.
 # Every key is documented under CONFIGURATION in ari(1).
 
-# Inventory for add and import when neither -i nor ARI_INVENTORY names one.
+# Inventory for add, import, group NAME and key NAME when neither -i nor ARI_INVENTORY names one.
 default = "personal"
 
 # One table per module per inventory; a table present turns that module on.
