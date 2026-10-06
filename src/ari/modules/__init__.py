@@ -104,6 +104,13 @@ class Module:
         otherwise drop silently. Each is reported and the host is left alone."""
         return []
 
+    def host_problems(self, inventory: Inventory, host: Host) -> list[str]:
+        """What this module couldn't write for a host as its record stands, beyond what host_data
+        checks when the inventory loads. add, edit and import run it on every host they save, and
+        validate should cover it for every host export writes. Load never does, so a record that
+        holds one still loads and an edit can put it right."""
+        return []
+
     def describe(self, inventory: Inventory, host: Host) -> list[str]:
         """Lines for `ari show`."""
         return [f"{k} {v}" for k, v in host.modules.get(self.name, {}).items()]

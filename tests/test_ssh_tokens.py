@@ -241,6 +241,16 @@ Host hashes
     HostName 192.0.2.32
     User po#stgres
     ProxyJump bastion#1
+
+Host quoted
+    HostName 192.0.2.33
+    User "#ops"
+    IdentityFile "#keys/odd"
+
+Host eq
+    HostName 192.0.2.34
+    User ==x
+    IdentityFile "=keys/eq"
 """
 
 
@@ -252,7 +262,7 @@ def test_import_then_export_changes_nothing_ssh_resolves(home, tmp_path):
     assert run("import", "ssh", str(source)) == 0
     assert run("export") == 0
     exported = home / "ssh" / "10-personal.conf"
-    for name in ("winbox", "db", "db.lab", "jump", "hashes", "old"):
+    for name in ("winbox", "db", "db.lab", "jump", "hashes", "quoted", "eq", "old"):
         before = subprocess.run([SSH, "-G", "-F", str(source), name], capture_output=True, text=True, check=True).stdout
         after = subprocess.run([SSH, "-G", "-F", str(exported), name], capture_output=True, text=True, check=True).stdout
         assert before == after, name

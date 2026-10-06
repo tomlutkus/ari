@@ -1203,6 +1203,7 @@ def _shape_problems(inventory: Inventory, host: Host) -> list[Problem]:
         check(None, Host.from_dict, host.to_dict(), inventory.name)
 
     installed = registry().modules
+    unreadable = set()
     for name, data in host.modules.items():
         if name in installed:
             try:
@@ -1210,6 +1211,12 @@ def _shape_problems(inventory: Inventory, host: Host) -> list[Problem]:
             except HostsError as e:
                 # ssh options are the one module field add and edit set directly.
                 problems.append(Problem("options" if name == "ssh" else None, str(e)))
+                unreadable.add(name)
+    for name, module in installed.items():
+        # What a module couldn't write as the record says, though load would take it.
+        if name not in unreadable:
+            field = "options" if name == "ssh" else None
+            problems += [Problem(field, f"{where}: {p}") for p in module.host_problems(inventory, host)]
     if host.user and ("\n" in host.user or "\r" in host.user):
         problems.append(Problem("user", f"{where}: user must be one line"))
     return problems

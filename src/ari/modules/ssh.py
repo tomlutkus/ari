@@ -88,10 +88,64 @@ def _value(keyword: str, rest: str, args: list[str], end: int) -> tuple[str | No
     return rest[:end].rstrip(" \t"), ""
 
 
+def _clean(raw: str) -> str:
+    """A line as ssh takes it before reading: cut at a NUL, its whitespace trimmed."""
+    return raw.partition("\0")[0].rstrip(" \t\r\n\f").lstrip(" \t\r\n")
+
+
+def _reading(keyword: str, rest: str) -> tuple[str | None, str, list[str]]:
+    """What ssh makes of a keyword and the rest of its line: the value as the record stores it, or
+    None and why ssh refuses the line, and the values as ssh splits them."""
+    parsed = _args(rest)
+    args, end = parsed if parsed is not None else ([], 0)
+    if not rest:
+        return None, "no value", args
+    if parsed is None:
+        return None, "an unclosed quote", args
+    if keyword.lower() == "host":
+        return (None, "an empty name", args) if "" in args else (rest, "", args)
+    value, why = _value(keyword.lower(), rest, args, end)
+    return value, why, args
+
+
 def _quote(value: str) -> str:
-    if value and not any(c.isspace() or c in "\"'" for c in value):
+    """A field as ssh_config text that ssh reads back as value: as it is when it reads back
+    unchanged, else in double quotes with backslashes and quotes escaped. Unquoted, a leading #
+    starts a comment, ssh takes a leading = as part of what follows the keyword, and two
+    backslashes read as one."""
+    bare = value and value[0] not in "#=" and not any(c.isspace() or c in "\"'" for c in value)
+    if bare and _args(value) == ([value], len(value)):
         return value
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _field_problem(what: str, value: str) -> str | None:
+    """A field no quoting can write: ssh_config ends a line at a newline, and at a NUL."""
+    if "\n" in value or "\0" in value:
+        return f"{what} {value!r} can't be written: ssh_config ends a line at a newline or a NUL"
+    return None
+
+
+def unwritable(keyword: str, value: str) -> str | None:
+    """Why ssh wouldn't read value from the line export writes for an option, or None when it
+    would. Options are stored as ssh_config text, a line's worth of values, so export writes them
+    as they are and can't quote them: one ssh reads differently can't be stored. The reading is
+    import's, so what import stores always passes."""
+    match = _KEYWORD.fullmatch(_clean(f"{keyword} {value}"))
+    read, why, _ = _reading(keyword, match.group(2) or "") if match else (None, "", [])
+    if read == value:
+        return None
+    if why == "an unclosed quote":
+        return "an unclosed quote, which makes ssh refuse the whole file"
+    reads = f"would read {read!r}" if read else "would read no value"
+    parsed = _args(value)
+    if keyword.lower() == "proxyjump" and "#" in value:
+        return f"ssh cuts ProxyJump at its first #, quoted or not, and {reads}"
+    if keyword.lower() not in _WHOLE and parsed is not None and value[parsed[1] :].strip(" \t"):
+        return f"a # that starts a value comments out the rest, and ssh {reads}"
+    if value and (value != value.strip(" \t\r\f") or value.startswith("=")):
+        return f"ssh drops a leading = and whitespace at either end, and {reads}"
+    return f"ssh {reads}"
 
 
 # Keywords the host record or the block structure already covers. As options they'd be written a
@@ -145,6 +199,16 @@ def lines(keyword: str, value: Value) -> list[str]:
     return [f"{keyword} {v}" for v in (value if isinstance(value, list) else [value])]
 
 
+def option_problems(options: dict[str, Value]) -> list[str]:
+    """Every value of these options that ssh wouldn't read as stored, one problem each."""
+    return [
+        f"ssh option {keyword} {one!r} can't be written: {why}"
+        for keyword, value in options.items()
+        for one in (value if isinstance(value, list) else [value])
+        if (why := unwritable(keyword, one))
+    ]
+
+
 def options(inventory: Inventory, host: Host) -> dict[str, Value]:
     """Effective ssh options: inventory defaults, overridden by the host. Keywords compare case-insensitively."""
     own = host.modules.get("ssh", {}).get("options", {})
@@ -164,25 +228,16 @@ def parse(text: str, source: str) -> tuple[list[Block], list[str]]:
     skipping = False
 
     for n, raw in enumerate(text.split("\n"), 1):
-        line = raw.partition("\0")[0].rstrip(" \t\r\n\f").lstrip(" \t\r\n")
+        line = _clean(raw)
         if not line or line.startswith("#"):
             continue
         match = _KEYWORD.fullmatch(line)
         if not match:
             warnings.append(f"{source}:{n}: can't read {line!r}, skipped")
             continue
-        keyword, rest = match.group(1), match.group(2) or ""
+        keyword = match.group(1)
         lowered = keyword.lower()
-        parsed = _args(rest)
-        args, end = parsed if parsed is not None else ([], 0)
-        if not rest:
-            value, why = None, "no value"
-        elif parsed is None:
-            value, why = None, "an unclosed quote"
-        elif lowered == "host":
-            value, why = (None, "an empty name") if "" in args else (rest, "")
-        else:
-            value, why = _value(lowered, rest, args, end)
+        value, why, args = _reading(keyword, match.group(2) or "")
         refused = f"{source}:{n}: ssh refuses this line ({why}), and with it the whole file"
 
         if lowered == "host":
@@ -472,6 +527,27 @@ class SshModule(Module):
         host.hostname = host.hostname or host.name
         if host.port is None:
             host.port = 22
+
+    def host_problems(self, inventory: Inventory, host: Host) -> list[str]:
+        """The host's own options, each value as ssh would read it from the line export writes."""
+        return option_problems(host.modules.get("ssh", {}).get("options", {}))
+
+    def validate(self, inventory: Inventory, hosts: list[Host], settings: Settings) -> list[str]:
+        """Everything export writes reads back in ssh as the record holds it: the defaults'
+        options and user, and each host's names, address, user, key files and options."""
+        problems = [f"defaults: {p}" for p in option_problems(inventory.defaults.modules.get("ssh", {}).get("options", {}))]
+        if inventory.defaults.user and (p := _field_problem("user", inventory.defaults.user)):
+            problems.append(f"defaults: {p}")
+        for host in hosts:
+            fields = [("name", host.name), *(("alias", a) for a in host.aliases), ("hostname", host.hostname)]
+            fields += [("user", host.user)] if host.user else []
+            problems += [f"{host.name}: {p}" for what, v in fields if (p := _field_problem(what, v))]
+            problems += [f"{host.name}: {p}" for p in self.host_problems(inventory, host)]
+        for name in dict.fromkeys(name for host in hosts for name in inventory.host_keys(host)):
+            key = inventory.keys.get(name)
+            if key is not None and (p := _field_problem("path", key.path)):
+                problems.append(f"key {name}: {p}")
+        return problems
 
     def describe(self, inventory: Inventory, host: Host) -> list[str]:
         return [line for k, v in options(inventory, host).items() for line in lines(k, v)]

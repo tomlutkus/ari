@@ -1871,6 +1871,26 @@ data.
 ssh options can\[aq]t repeat a keyword
 the host has a field for, like
 \f[B]User\f[R] or \f[B]Port\f[R].
+Options are kept as ssh_config text and
+written as they are, so each value must
+be one ssh reads as stored: an unclosed
+quote, which makes ssh refuse the whole
+file, is refused, and so are a
+\f[V]#\f[R] that starts a value, which
+comments out the rest, any \f[V]#\f[R]
+in \f[B]ProxyJump\f[R], where ssh cuts
+it quoted or not, a leading \f[V]=\f[R]
+or whitespace at either end, which ssh
+drops, and an empty value.
+\f[B]ProxyCommand\f[R],
+\f[B]LocalCommand\f[R],
+\f[B]RemoteCommand\f[R] and
+\f[B]KnownHostsCommand\f[R] keep a
+\f[V]#\f[R], as ssh does.
+An inventory that already holds such a
+value still loads, so \f[B]edit\f[R]
+\f[I]NAME\f[R] \f[B]--opt\f[R]
+\f[I]KEY\f[R]= can clear it.
 The TUI\[aq]s form and group picker save
 through these same checks.
 .PP
@@ -1892,6 +1912,12 @@ children may not form a cycle, no alias
 may be its host\[aq]s own name in
 another case, and no two outputs may
 write the same file.
+The \f[B]ssh\f[R] module adds its own:
+every option it writes, the
+defaults\[aq] included, is one ssh reads
+as stored, and no name, alias, address,
+user or key file holds a newline or a
+NUL, which no quoting can write.
 The \f[B]ansible\f[R] module adds its
 own rules: every declared group is a
 valid Ansible group name and matches
@@ -1921,6 +1947,18 @@ they ignore file boundaries, and
 across matching blocks, so a default in
 one file would offer its key to every
 host.
+.PP
+A name, address, user or key file is
+written as it is when ssh reads it back
+unchanged, and in double quotes
+otherwise: when it holds a space or a
+quote, starts with \f[V]#\f[R], which
+would start a comment, or with
+\f[V]=\f[R], which ssh takes as part of
+what separates the keyword from its
+value, or holds two backslashes in a
+row, which ssh reads as one.
+Options are written as stored.
 .PP
 Every write goes to a new hidden file
 beside the target, \f[V].FILE.\f[R]
