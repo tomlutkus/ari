@@ -908,14 +908,23 @@ Hosts that merged are saved even when
 others conflicted or were refused; the
 exit status is then 1.
 .PP
-Importing into an empty inventory sets
-its defaults: from the source\[aq]s own
-defaults when it has them, like
-Ansible\[aq]s \f[B]all.vars\f[R],
-otherwise to the user and the keys most
-hosts share, when at least two share
-them.
-Each host stores only what differs.
+Defaults are only ever declared, never
+worked out from what hosts happen to
+share.
+Importing into an empty inventory takes
+the source\[aq]s own defaults when it
+has them, like Ansible\[aq]s
+\f[B]all.vars\f[R], and each host stores
+only what differs; a source without
+them, like an ssh config, leaves the
+inventory without defaults and each host
+with its own values.
+A new host that sets no user or key,
+imported into an inventory that has a
+default for it, takes that default,
+which changes what ssh or Ansible did
+with it, so import says so and
+doesn\[aq]t adopt the files.
 An inventory with hosts or defaults
 keeps its own, and a host that leaves a
 field to the source\[aq]s defaults takes
@@ -935,6 +944,22 @@ skipped \f[V]Host *\f[R] block, the
 files are not adopted, and an export
 over one of them needs \f[B]--force\f[R]
 once you\[aq]ve checked it.
+Comments are the exception: nothing
+reads them, so a file whose only loss is
+its comments is still adopted, and each
+comment is listed with its file and
+line.
+.PP
+Names are unique ignoring case, by
+\f[B]ari\f[R]\[aq]s own rule, but ssh
+matches Host tokens as typed and Ansible
+keeps host names as written.
+A source host that matches one
+\f[B]ari\f[R] holds only in another
+case, \f[V]web\f[R] beside
+\f[V]Web\f[R], is another host to them,
+so it\[aq]s a conflict and isn\[aq]t
+imported.
 .PP
 .TS
 tab(@);
@@ -1054,7 +1079,8 @@ of those keywords are compared, and a
 setting it would fill is refused.
 A block without \f[B]User\f[R] stays
 without one, so ssh uses whoever
-connects.
+connects, unless the inventory has a
+default user, as above.
 Point \f[B]ssh.path\f[R] only at a file
 ari owns: an Include, Match or
 \f[V]Host *\f[R] in it would be gone
@@ -1112,6 +1138,22 @@ import prints turns
 Anything else is reported as not
 imported: other vars, group vars, and
 members that no hosts section defines.
+\f[B]ungrouped\f[R] is the group Ansible
+gives every host in no other, so its
+hosts come in without it and it
+isn\[aq]t declared.
+Ansible also reads \f[B]group_vars/\f[R]
+and \f[B]host_vars/\f[R] beside the
+inventory files, and what they set wins
+over those files: a connection var
+there, \f[B]ansible_host\f[R],
+\f[B]ansible_user\f[R],
+\f[B]ansible_port\f[R] or a key file,
+overrides what export writes.
+\f[B]ari\f[R] reads neither, so import
+names each that\[aq]s there; the files
+it read are still adopted, since the
+inventory holds all of them.
 Comments are read by nothing and listed
 with their file and line, so zone
 headers and reasons can be put back with

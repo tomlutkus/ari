@@ -676,28 +676,10 @@ class ImportReport:
     refused: list[str] = field(default_factory=list)  # hosts that fail the checks every write runs
     warnings: list[str] = field(default_factory=list)
     unadopted: list[str] = field(default_factory=list)  # sources the guard didn't record
-    defaults_set: dict[str, str] = field(default_factory=dict)
-    defaults_from: str = "the most common values"
+    defaults_set: dict[str, str] = field(default_factory=dict)  # the source's own defaults, taken by a new inventory
     groups_added: list[str] = field(default_factory=list)
     keys_added: list[str] = field(default_factory=list)  # keys declared for paths the inventory had none for
     settings: dict | None = None  # a config table the source suggests, for the module that read it
-
-
-def _infer_defaults(inventory: Inventory, hosts: list[Host]) -> dict[str, str]:
-    """For a brand new inventory: the user and keys most hosts share become defaults."""
-    chosen = {}
-    users = Counter(h.user for h in hosts if h.user)
-    if users:
-        user, count = users.most_common(1)[0]
-        if count >= 2:
-            inventory.defaults.user = chosen["user"] = user
-    keys = Counter(tuple(h.keys) for h in hosts if h.keys)
-    if keys:
-        names, count = keys.most_common(1)[0]
-        if count >= 2:
-            inventory.defaults.keys = list(names)
-            chosen["keys"] = " ".join(inventory.defaults.keys)
-    return chosen
 
 
 def _module(name: str) -> Module:
@@ -838,8 +820,9 @@ def import_hosts(
     label = tilde(result.files[0][0]) if result.files else (source or module_name)
     report = ImportReport(target.name, label, warnings=list(result.warnings))
     added_keys = _adopt_keys(target, result.keys, result.hosts, result.defaults.keys if result.defaults else [])
-    # Each host's public keys, by host rather than by position, since refused hosts drop out below.
+    # Each host's public keys and Host line, by host rather than by position, since refused hosts drop out below.
     listed = {id(h): pubs for h, pubs in zip(result.hosts, result.pubs or []) if pubs is not None}
+    covers = None if result.covers is None else {id(h): tokens for h, tokens in zip(result.hosts, result.covers)}
     reworded: list[str] = []  # the same keys under other comments
     unlisted: list[str] = []  # new hosts whose keys don't hold the public keys the source lists
 
@@ -865,7 +848,6 @@ def import_hosts(
             target.defaults.user, target.defaults.port, target.defaults.keys = d.user, d.port, list(d.keys)
             keys = " ".join(d.keys) or None
             report.defaults_set = {k: str(v) for k, v in (("user", d.user), ("port", d.port), ("keys", keys)) if v is not None}
-            report.defaults_from = "the source"
         else:
             # The inventory keeps its own, so each host gets what the source gave it: a host that
             # leaves a field unset takes the source's default. Stored where it differs from the
@@ -886,8 +868,9 @@ def import_hosts(
                         setattr(host, attr, value)
                         if differs[attr]:
                             leaning.add(host.name)
-    elif fresh:
-        report.defaults_set = _infer_defaults(target, result.hosts)
+    # Defaults are only ever declared: by the inventory, or by a source of its own for a new one.
+    # Never inferred from what hosts happen to share.
+    declared_here = fresh and result.defaults is not None
     report.settings = result.settings
 
     groups_changed = False
@@ -927,15 +910,26 @@ def import_hosts(
         for token in host.tokens()
     }
 
-    for i, host in enumerate(result.hosts):
+    inherited: list[str] = []  # new hosts that take a default the source never stated for them
+    for host in result.hosts:
         clash = next((elsewhere[t.casefold()] for t in host.tokens() if t.casefold() in elsewhere), None)
         if clash:
             report.conflicts.append(f"{host.name}: already defined as {clash}")
             continue
         existing = target.find(host.name)
+        if existing is not None and host.name not in existing.tokens():
+            # ssh matches Host tokens as typed and Ansible keeps host names as written, so this is
+            # another host to them; ari's names are unique ignoring case, so it can't hold both.
+            held = next(t for t in existing.tokens() if t.casefold() == host.name.casefold())
+            what = "the name" if held == existing.name else "an alias"
+            report.conflicts.append(
+                f"{host.name}: ssh and Ansible tell it apart from {held}, {what} ari holds, and ari can't keep both spellings;"
+                " not imported"
+            )
+            continue
         if existing is None:
-            inherits_user = result.defaults is None and host.user is None and target.defaults.user
-            inherits_key = result.defaults is None and not host.keys and target.defaults.keys
+            inherits_user = host.user is None and target.defaults.user and not declared_here
+            inherits_key = not host.keys and target.defaults.keys and not declared_here
             module.complete(host)
             default_keys = target.key_paths(target.defaults.keys)
             if result.first_key_only and host.keys and _same_keys(target.key_paths(host.keys), default_keys, True):
@@ -952,6 +946,8 @@ def import_hosts(
                 report.warnings.append(f"{host.name}: no User in the source; the default user {target.defaults.user} will apply")
             if inherits_key:
                 report.warnings.append(f"{host.name}: no IdentityFile in the source; the default key will apply")
+            if inherits_user or inherits_key:
+                inherited.append(host.name)
             host.last_updated = now()
             target.hosts.append(host)
             report.added.append(host.name)
@@ -979,7 +975,7 @@ def import_hosts(
         # ssh gives a block's settings only to the tokens it names, as typed: one that leaves out a
         # name the host answers to, or writes it in another case, can't change what the whole
         # record says. New aliases change nothing for the names it leaves out, so they still merge.
-        left_out = [t for t in existing.tokens() if result.covers is not None and t not in result.covers[i]]
+        left_out = [t for t in existing.tokens() if covers is not None and t not in covers[id(host)]]
         if left_out and _settings(candidate) != _settings(existing):
             report.conflicts.append(
                 f"{host.name}: its Host line leaves out {', '.join(left_out)}, so ssh applies it to the rest alone; not merged"
@@ -1022,9 +1018,10 @@ def import_hosts(
     if report.added or report.merged or report.defaults_set or report.groups_added or groups_changed:
         storage.save(target)
     # The guard records a source only when the inventory now holds all of it, so an export over
-    # that file loses nothing. Anything conflicted, refused or left out means a person looks first.
+    # that file loses nothing. Anything conflicted, refused or left out, or a host that now takes a
+    # default it never had, means a person looks first.
     if result.files:
-        if report.conflicts or report.refused or result.lossy or reworded or unlisted:
+        if report.conflicts or report.refused or result.lossy or reworded or unlisted or inherited:
             report.unadopted = [tilde(path) for path, _ in result.files]
         else:
             guard = Guard()

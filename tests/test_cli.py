@@ -79,14 +79,15 @@ def test_starter_examples_load_once_uncommented(home):
     assert set(cfg.get("work").modules) == {"ssh", "ansible"}
 
 
-def test_import_infers_defaults_and_stores_only_differences(personal, capsys):
+def test_import_infers_no_defaults_and_each_host_keeps_its_own(personal, capsys):
     assert run("import", "ssh", str(FIXTURES / "personal.conf")) == 0
-    assert "4 added" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "4 added" in out and "defaults set" not in out
     data = personal_json(personal)
-    assert data["defaults"] == {"user": "tom", "keys": ["personal-ed25519"]}
+    assert data["defaults"] == {}
     assert data["keys"] == {"personal-ed25519": {"path": "~/.ssh/personal-ed25519"}}
     by_name = {h["name"]: h for h in data["hosts"]}
-    assert set(by_name["laptop"]) == {"name", "hostname", "aliases", "last_updated"}
+    assert (by_name["laptop"]["user"], by_name["laptop"]["keys"]) == ("tom", ["personal-ed25519"])
     assert by_name["nas"]["user"] == "root"
     assert by_name["github.com"]["user"] == "git"
 
@@ -427,13 +428,14 @@ def test_export_only_named_modules(personal, capsys):
     assert "unknown module 'nope'" in capsys.readouterr().err
 
 
-def test_missing_user_inherits_default_with_a_warning(personal, tmp_path, capsys):
-    run("import", "ssh", str(FIXTURES / "personal.conf"))
+def test_missing_user_inherits_a_declared_default_with_a_warning(personal, tmp_path, capsys):
+    (personal / "config" / "ari" / "personal.json").write_text(json.dumps({"version": 3, "defaults": {"user": "tom"}}))
     loose = tmp_path / "loose.conf"
     loose.write_text("Host spare\n  HostName 192.0.2.88\n")
     capsys.readouterr()
     assert run("import", "ssh", str(loose)) == 0
-    assert "no User in the source; the default user tom will apply" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "no User in the source; the default user tom will apply" in err and "not adopted" in err
     stored = next(h for h in personal_json(personal)["hosts"] if h["name"] == "spare")
     assert "user" not in stored
 

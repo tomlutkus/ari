@@ -400,7 +400,7 @@ def test_a_later_block_in_another_case_is_compared_not_added(personal, tmp_path,
     """ssh matches Host tokens as typed: Host DB doesn't apply when db is typed."""
     text = "Host db\n  HostName 192.0.2.10\n  IdentityFile ~/.ssh/a\n\nHost DB\n  IdentityFile ~/.ssh/b\n"
     assert run("import", "ssh", source(tmp_path, text)) == 1
-    assert "IdentityFile ~/.ssh/b differs from ~/.ssh/a; not merged" in capsys.readouterr().err
+    assert "DB: ssh and Ansible tell it apart from db, the name ari holds, and ari can't keep both spellings" in capsys.readouterr().err
 
 
 # A Host line that leaves out a name the host answers to can't change the whole record

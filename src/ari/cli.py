@@ -342,7 +342,7 @@ def cmd_import(cfg: Config, args: argparse.Namespace) -> int:
         _note("refused", "red", refused)
     if report.defaults_set:
         values = ", ".join(f"{k} {v}" for k, v in report.defaults_set.items())
-        out.print(f"{report.inventory}: defaults set from {report.defaults_from}: {values}", soft_wrap=True)
+        out.print(f"{report.inventory}: defaults set from the source: {values}", soft_wrap=True)
     for label, names in (("added", report.added), ("merged", report.merged), ("unchanged", report.unchanged)):
         if names:
             listed = f" ({', '.join(names)})" if len(names) <= 12 else ""

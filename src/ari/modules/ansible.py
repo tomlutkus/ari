@@ -234,6 +234,7 @@ class _Reader:
     route: dict[str, str] = field(default_factory=dict)  # group: the file that defines it
     referenced: dict[str, str] = field(default_factory=dict)  # child named but not defined: where
     members: dict[str, list[str]] = field(default_factory=dict)
+    loose: dict[str, str] = field(default_factory=dict)  # hosts ungrouped lists, by where it lists them
     keys: dict[str, KeyDef] = field(default_factory=dict)
     lossy: bool = False
     # AUTHORIZED, read to be checked against the record and never stored: all.vars' list and each host's own.
@@ -396,7 +397,24 @@ class _Reader:
         elif existing.to_dict() != host.to_dict() or self.pubs.get(name) != pubs:
             self._lose(f"{where}: defined again with different vars; kept the first")
 
+    def _ungrouped(self, data: Any, path: Path) -> None:
+        """Ansible puts every host in no other group into ungrouped itself, so a file that lists it
+        says nothing ari doesn't: its hosts come in without it, and the group isn't declared."""
+        where = f"{tilde(path)} (ungrouped)"
+        self.warnings.append(f"{where}: ungrouped is the group Ansible gives hosts in no other; its hosts are imported without it")
+        for key, value in self._mapping(data, where).items():
+            if key != "hosts":
+                self._lose(f"{where}: {key} not imported")
+                continue
+            for host, host_vars in self._mapping(value, f"{where}: hosts").items():
+                if host_vars:
+                    self._define(str(host), host_vars, path)
+                self.loose.setdefault(str(host), path.name)
+
     def _group(self, name: str, data: Any, path: Path) -> None:
+        if name == "ungrouped":
+            self._ungrouped(data, path)
+            return
         where = f"{tilde(path)} ({name})"
         if name not in self.groups:
             self.groups[name] = GroupDef()
@@ -444,6 +462,9 @@ class _Reader:
                     self._lose(f"{self.route[group]}: {group} lists {name}, which no hosts section defines; left out")
                 elif group not in host.groups:
                     host.groups.append(group)
+        for name, file in self.loose.items():
+            if name not in self.hosts:
+                self._lose(f"{file}: ungrouped lists {name}, which no hosts section defines; left out")
         for host in self.hosts.values():
             host.groups.sort(key=rank.__getitem__)
 
@@ -534,7 +555,9 @@ class AnsibleModule(Module):
     def validate(self, inventory: Inventory, hosts: list[Host], settings: Settings) -> list[str]:
         problems = []
         for name in inventory.groups:
-            if name in RESERVED_GROUPS or not GROUP_NAME.fullmatch(name):
+            if name in RESERVED_GROUPS:
+                problems.append(f"group {name!r} is one Ansible makes itself; remove it with ari group {name} --rm -i {inventory.name}")
+            elif not GROUP_NAME.fullmatch(name):
                 problems.append(f"group {name!r} isn't a usable Ansible group name (letters, digits, _)")
             files = [file for file, globs in settings.routes if _matches(name, globs)]
             if not files:
@@ -582,4 +605,11 @@ class AnsibleModule(Module):
         reader = _Reader()
         for path in paths:
             reader.read(path)
+        for name in ("group_vars", "host_vars"):
+            # Ansible reads these beside the inventory files, and what they set wins over them.
+            if (directory / name).is_dir():
+                reader.warnings.append(
+                    f"{tilde(directory / name)}: Ansible reads it too, and ari doesn't: ansible_host, ansible_user,"
+                    " ansible_port or a key file set there overrides what export writes"
+                )
         return reader.result(directory)

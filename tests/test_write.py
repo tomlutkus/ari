@@ -35,7 +35,18 @@ def declare_groups(home, groups, inventory="personal"):
 
 @pytest.fixture
 def imported(personal, capsys):
+    """The personal fixture imported, then the user and key its hosts share declared as the
+    inventory's defaults by hand, since import never infers one."""
     run("import", "ssh", str(FIXTURES / "personal.conf"))
+    path = personal / "config" / "ari" / "personal.json"
+    data = json.loads(path.read_text())
+    data["defaults"] = {"user": "tom", "keys": ["personal-ed25519"]}
+    for host in data["hosts"]:
+        if host.get("user") == "tom":
+            del host["user"]
+        if host.get("keys") == ["personal-ed25519"]:
+            del host["keys"]
+    path.write_text(json.dumps(data))
     capsys.readouterr()
     return personal
 
