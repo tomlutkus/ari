@@ -5,6 +5,8 @@ Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor 
 ## Unreleased
 
 - Each host can say what it runs: `os`, written by hand, one line. `add` and `edit` set it with `--os 'Ubuntu 24.04'` and `edit --os ''` clears it; the TUI's form has a field for it. `show` and the TUI's details print it, and `ls --search` and the TUI filter match it. No module exports it and import leaves it alone, so every generated file stays the same. The inventory format stays version 3, and a host without `os` stores nothing for it; ari 0.8 refuses a file in which any host has one.
+- `ls --columns name,os,notes` shows the columns you name, in that order: name, hostname, aliases, user, port, keys, os, notes, groups, exclude, inv, and each exporting module's column. Values are the ones that take effect, defaults included. Lists and notes share the width the other columns leave, so a row never wraps, and the rest are never cut.
+- `ls --format md` and `ls --format csv` print the same columns as a Markdown table or CSV, every value whole: a user set nowhere is blank rather than your login, a value's lines join with `<br>` in Markdown and stay inside a quoted CSV field. Without `--columns`, `ls` and both formats show the usual columns.
 
 ## 0.8.0 (2026-10-05)
 

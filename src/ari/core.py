@@ -1,11 +1,14 @@
 """Operations behind every command. No printing here: the CLI and the TUI both call these."""
 
 import copy
+import csv
 import getpass
+import io
 import os
 import re
 import shutil
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -174,6 +177,84 @@ def host_details(inventory: Inventory, host: Host) -> list[Detail]:
             details.append(Detail(name, "\n".join(lines)))
     details.append(Detail("updated", host.last_updated or "-"))
     return details
+
+
+# Columns: what ls shows, and what a table export writes
+
+
+@dataclass(frozen=True)
+class Column:
+    """One column of a host listing: its name, as --columns takes it, its heading, and its value
+    for a host, the one that takes effect. A list holds several values, shown joined with ", "."""
+
+    name: str
+    heading: str
+    value: Callable[[Inventory, Host], str | list[str]]
+
+
+COLUMNS: dict[str, Column] = {
+    c.name: c
+    for c in (
+        Column("name", "NAME", lambda inventory, host: host.name),
+        Column("hostname", "HOSTNAME", lambda inventory, host: host.hostname),
+        Column("aliases", "ALIASES", lambda inventory, host: list(host.aliases)),
+        # Blank when none is set: ssh then logs in as whoever connects, on whichever machine.
+        Column("user", "USER", lambda inventory, host: inventory.user(host) or ""),
+        Column("port", "PORT", lambda inventory, host: str(inventory.port(host))),
+        Column("keys", "KEYS", lambda inventory, host: list(inventory.host_keys(host))),
+        Column("os", "OS", lambda inventory, host: host.os),
+        Column("notes", "NOTES", lambda inventory, host: host.notes),
+        Column("groups", "GROUPS", lambda inventory, host: list(host.groups)),
+        Column("exclude", "EXCLUDE", lambda inventory, host: list(host.exclude)),
+        Column("inv", "INV", lambda inventory, host: inventory.name),
+    )
+}
+
+
+def ls_columns(cfg: Config, scope: str | None = None, names: list[str] | None = None) -> list[Column]:
+    """The columns ls shows: those named, in order, else its own set. Beside the record's columns,
+    each module that exports for an inventory in scope has one saying whether export writes the
+    host there. A name that's neither, or given twice, is refused, naming the ones there are."""
+    modules = export_modules(cfg, scope)
+    if not names:
+        names = ["name", "hostname", "user", "port", *modules, "groups", "inv"]
+    columns = []
+    for name in names:
+        if name in COLUMNS:
+            columns.append(COLUMNS[name])
+        elif name in modules:
+            columns.append(Column(name, name.upper(), lambda inventory, host, m=name: module_reach(cfg, inventory, host, m).value))
+        else:
+            known = ", ".join([*COLUMNS, *modules])
+            raise HostsError(f"no column {name!r}; there are {known}")
+        if names.count(name) > 1:
+            raise HostsError(f"column {name!r} is named twice")
+    return columns
+
+
+def _joined(value: str | list[str]) -> str:
+    return ", ".join(value) if isinstance(value, list) else value
+
+
+def markdown_table(columns: list[Column], rows: list[tuple[Inventory, Host]]) -> str:
+    """A Markdown table, one line per host: a value's lines join with <br>, and | is escaped."""
+
+    def cell(value: str | list[str]) -> str:
+        return "<br>".join(_joined(value).splitlines()).replace("|", "\\|")
+
+    lines = ["| " + " | ".join(c.heading for c in columns) + " |", "| " + " | ".join("---" for _ in columns) + " |"]
+    lines += ["| " + " | ".join(cell(c.value(inventory, host)) for c in columns) + " |" for inventory, host in rows]
+    return "\n".join(lines) + "\n"
+
+
+def csv_table(columns: list[Column], rows: list[tuple[Inventory, Host]]) -> str:
+    """CSV under a header of column names, lines ending in \\n. A value with a comma, a quote or
+    a line break is quoted, line breaks kept."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow([c.name for c in columns])
+    writer.writerows([_joined(c.value(inventory, host)) for c in columns] for inventory, host in rows)
+    return out.getvalue()
 
 
 def _locate(cfg: Config, inventories: dict[str, Inventory], token: str, scope: str | None) -> tuple[Inventory, Host]:

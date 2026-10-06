@@ -78,33 +78,72 @@ def _mark(cfg: Config, inventory, host, module: str) -> Text:
     return Text(reach.value, style="dim" if reach is core.ModuleReach.OFF else "")
 
 
-def _ls_table(cfg: Config, modules: list[str], rows: list, groups: list[Text]) -> Table:
+# Columns that give way so a row never wraps: a list shows as many values as fit, then +N, and
+# notes its first line, cut short. The others are never cut.
+_FLEXIBLE = {"aliases", "keys", "groups", "exclude", "notes"}
+
+
+def _shown(column: core.Column, inventory, host) -> str:
+    """The whole text a flexible column would show for a host."""
+    value = column.value(inventory, host)
+    if isinstance(value, list):
+        return ", ".join(value) or "-"
+    return (value.splitlines() or [""])[0] or "-"
+
+
+def _ls_cell(cfg: Config, column: core.Column, inventory, host, width: int | None) -> Text:
+    if column.name not in core.COLUMNS:
+        return _mark(cfg, inventory, host, column.name)
+    if column.name == "user":
+        return _user(inventory, host)
+    if column.name == "inv":
+        return Text(inventory.name, style="dim")
+    if column.name not in _FLEXIBLE:
+        return Text(column.value(inventory, host) or "-")
+    if width is None:
+        return Text("")  # measuring what the other columns take
+    value = column.value(inventory, host)
+    if isinstance(value, list):
+        return _fit_names(value, width)
+    text = Text(_shown(column, inventory, host))
+    text.truncate(width, overflow="ellipsis")
+    return text
+
+
+def _ls_table(cfg: Config, columns: list[core.Column], rows: list, widths: dict[str, int]) -> Table:
     table = Table(box=box.SIMPLE_HEAD, header_style="bold", pad_edge=False)
-    for column in ("NAME", "HOSTNAME", "USER", "PORT", *(m.upper() for m in modules), "GROUPS", "INV"):
-        table.add_column(column, justify="right" if column == "PORT" else "left", no_wrap=column == "GROUPS")
-    for (inventory, host), cell in zip(rows, groups):
-        table.add_row(
-            Text(host.name),
-            Text(host.hostname),
-            _user(inventory, host),
-            Text(str(inventory.port(host))),
-            *(_mark(cfg, inventory, host, m) for m in modules),
-            cell,
-            Text(inventory.name, style="dim"),
-        )
+    for column in columns:
+        table.add_column(column.heading, justify="right" if column.name == "port" else "left", no_wrap=column.name in _FLEXIBLE)
+    for inventory, host in rows:
+        table.add_row(*(_ls_cell(cfg, c, inventory, host, widths.get(c.name)) for c in columns))
     return table
 
 
+def _print_hosts(cfg: Config, columns: list[core.Column], rows: list) -> None:
+    """The flexible columns share what the others leave, the widest giving way first, down to
+    their headings, so a row never wraps on their account."""
+    flexible = [c for c in columns if c.name in _FLEXIBLE]
+    bare = _natural_width(_ls_table(cfg, columns, rows, {}))
+    floors = [cell_len(c.heading) for c in flexible]
+    room = out.width - bare + sum(floors)
+    give = [max(floor, *(cell_len(_shown(c, *row)) for row in rows)) for c, floor in zip(flexible, floors)]
+    while sum(give) > room and any(g > f for g, f in zip(give, floors)):
+        widest = max((i for i in range(len(give)) if give[i] > floors[i]), key=lambda i: give[i])
+        give[widest] -= 1
+    _print_whole(_ls_table(cfg, columns, rows, {c.name: g for c, g in zip(flexible, give)}))
+
+
 def cmd_ls(cfg: Config, args: argparse.Namespace) -> int:
+    names = [n.strip() for n in args.columns.split(",")] if args.columns is not None else None
+    columns = core.ls_columns(cfg, _inventory_arg(args), names)
     rows = core.list_hosts(cfg, _inventory_arg(args), args.search, args.group)
+    if args.format:
+        sys.stdout.write((core.markdown_table if args.format == "md" else core.csv_table)(columns, rows))
+        return 0
     if not rows:
         out.print("no hosts")
         return 0
-    modules = core.export_modules(cfg, _inventory_arg(args))
-    # GROUPS gets whatever width the other columns leave, so a row never wraps on its account.
-    bare = _natural_width(_ls_table(cfg, modules, rows, [Text("")] * len(rows)))
-    room = max(out.width - (bare - len("GROUPS")), len("GROUPS"))
-    _print_whole(_ls_table(cfg, modules, rows, [_fit_names(host.groups, room) for _, host in rows]))
+    _print_hosts(cfg, columns, rows)
     out.print(Text(_plural(len(rows), "host"), style="dim"))
     return 0
 
@@ -431,6 +470,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--search", metavar="TEXT", help="match any field, effective user, port and key included; case-insensitive"
     )
     ls.add_argument("--group", metavar="GROUP", help="only hosts in this group")
+    ls.add_argument(
+        "--columns",
+        metavar="NAME,...",
+        help=f"these columns, in this order: {', '.join(core.COLUMNS)}, or an exporting module's name",
+    )
+    ls.add_argument("--format", choices=("md", "csv"), help="print a Markdown table or CSV instead")
     ls.set_defaults(func=cmd_ls)
 
     show = sub.add_parser("show", parents=[common], help="show one host with its effective values")

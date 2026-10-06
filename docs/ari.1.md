@@ -18,7 +18,7 @@ ari - keep SSH hosts in one place and generate ssh config and Ansible inventory 
 
 **ari init**
 
-**ari ls** [**--search** *TEXT*] [**--group** *GROUP*]
+**ari ls** [**--search** *TEXT*] [**--group** *GROUP*] [**--columns** *NAME*,...] [**--format** **md** | **csv**]
 
 **ari show** *NAME*
 
@@ -82,6 +82,28 @@ GROUPS shows as many of a host's groups as fit beside the other columns, in the 
 |-------|-------------|
 | **--search** *TEXT* | Only hosts with *TEXT* in any field, case-insensitive. User, port and keys match their effective values, defaults included, and keys match by name and by file |
 | **--group** *GROUP* | Only hosts in *GROUP* |
+| **--columns** *NAME*,... | These columns, in this order, instead of the usual ones; see below |
+| **--format** *FORMAT* | Print the columns as **md**, a Markdown table, or **csv**, every value whole |
+
+**--columns** takes the names below, separated by commas, and the name of each module that has a column above. Each shows the value that takes effect, inherited from the defaults or not.
+
+| Column | Shows |
+|-------|-------------|
+| **name** | The host's name |
+| **hostname** | The address it connects to |
+| **aliases** | Its other names |
+| **user** | The login ssh uses. With none set on the host or in the defaults, the table shows yours, dimmed, and **--format** leaves it blank |
+| **port** | The port ssh uses |
+| **keys** | The keys ssh offers, by name, in order |
+| **os** | What it runs |
+| **notes** | Its notes |
+| **groups** | The groups it lists, in its order |
+| **exclude** | The modules it stays out of |
+| **inv** | Its inventory |
+
+A list shows its values joined by a comma and a space, and an empty value shows as **-**. On screen, aliases, keys, groups, exclude and notes share the width the other columns leave, the widest giving way first and none below its heading, so a row never wraps: a list shows as many values as fit, then +*N*, and notes show their first line, cut short. The other columns are never cut, as for GROUPS above.
+
+With **--format**, every value is whole and nothing is dimmed or cut. **md** prints a heading row, a separator, then one line per host, with a value's lines joined by `<br>` and every `|` escaped as `\|`. **csv** prints a header of column names, then one row per host, each line ending in a newline; a value holding a comma, a quote or a line break is quoted, its line breaks kept. Hosts come in the order **ls** lists them, and with none only the heading prints. Without **--columns**, both take the usual ones.
 
 ## show *NAME*
 
@@ -446,6 +468,12 @@ Find every host on a subnet:
 
 ```
 ari ls --search 192.0.2.
+```
+
+What the work hosts run, as CSV:
+
+```
+ari -i work ls --columns name,hostname,os --format csv
 ```
 
 Browse the work hosts in the TUI, then filter with **/** and ssh to one with **s**:

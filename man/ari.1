@@ -35,7 +35,10 @@ inventory from them
 .PP
 \f[B]ari ls\f[R] [\f[B]--search\f[R]
 \f[I]TEXT\f[R]] [\f[B]--group\f[R]
-\f[I]GROUP\f[R]]
+\f[I]GROUP\f[R]] [\f[B]--columns\f[R]
+\f[I]NAME\f[R],...]
+[\f[B]--format\f[R] \f[B]md\f[R] |
+\f[B]csv\f[R]]
 .PP
 \f[B]ari show\f[R] \f[I]NAME\f[R]
 .PP
@@ -204,7 +207,126 @@ T{
 T}@T{
 Only hosts in \f[I]GROUP\f[R]
 T}
+T{
+\f[B]--columns\f[R] \f[I]NAME\f[R],...
+T}@T{
+These columns, in this order, instead of
+the usual ones; see below
+T}
+T{
+\f[B]--format\f[R] \f[I]FORMAT\f[R]
+T}@T{
+Print the columns as \f[B]md\f[R], a
+Markdown table, or \f[B]csv\f[R], every
+value whole
+T}
 .TE
+.PP
+\f[B]--columns\f[R] takes the names
+below, separated by commas, and the name
+of each module that has a column above.
+Each shows the value that takes effect,
+inherited from the defaults or not.
+.PP
+.TS
+tab(@);
+lw(24.5n) lw(45.5n).
+T{
+Column
+T}@T{
+Shows
+T}
+_
+T{
+\f[B]name\f[R]
+T}@T{
+The host\[aq]s name
+T}
+T{
+\f[B]hostname\f[R]
+T}@T{
+The address it connects to
+T}
+T{
+\f[B]aliases\f[R]
+T}@T{
+Its other names
+T}
+T{
+\f[B]user\f[R]
+T}@T{
+The login ssh uses.
+With none set on the host or in the
+defaults, the table shows yours, dimmed,
+and \f[B]--format\f[R] leaves it blank
+T}
+T{
+\f[B]port\f[R]
+T}@T{
+The port ssh uses
+T}
+T{
+\f[B]keys\f[R]
+T}@T{
+The keys ssh offers, by name, in order
+T}
+T{
+\f[B]os\f[R]
+T}@T{
+What it runs
+T}
+T{
+\f[B]notes\f[R]
+T}@T{
+Its notes
+T}
+T{
+\f[B]groups\f[R]
+T}@T{
+The groups it lists, in its order
+T}
+T{
+\f[B]exclude\f[R]
+T}@T{
+The modules it stays out of
+T}
+T{
+\f[B]inv\f[R]
+T}@T{
+Its inventory
+T}
+.TE
+.PP
+A list shows its values joined by a
+comma and a space, and an empty value
+shows as \f[B]-\f[R].
+On screen, aliases, keys, groups,
+exclude and notes share the width the
+other columns leave, the widest giving
+way first and none below its heading, so
+a row never wraps: a list shows as many
+values as fit, then +\f[I]N\f[R], and
+notes show their first line, cut short.
+The other columns are never cut, as for
+GROUPS above.
+.PP
+With \f[B]--format\f[R], every value is
+whole and nothing is dimmed or cut.
+\f[B]md\f[R] prints a heading row, a
+separator, then one line per host, with
+a value\[aq]s lines joined by
+\f[V]<br>\f[R] and every \f[V]|\f[R]
+escaped as \f[V]\[rs]|\f[R].
+\f[B]csv\f[R] prints a header of column
+names, then one row per host, each line
+ending in a newline; a value holding a
+comma, a quote or a line break is
+quoted, its line breaks kept.
+Hosts come in the order \f[B]ls\f[R]
+lists them, and with none only the
+heading prints.
+Without \f[B]--columns\f[R], both take
+the usual ones.
 .SS show \f[I]NAME\f[R]
 .PP
 Show one host, found by name or alias in
@@ -1856,6 +1978,14 @@ Find every host on a subnet:
 .nf
 \f[C]
 ari ls --search 192.0.2.
+\f[R]
+.fi
+.PP
+What the work hosts run, as CSV:
+.IP
+.nf
+\f[C]
+ari -i work ls --columns name,hostname,os --format csv
 \f[R]
 .fi
 .PP
