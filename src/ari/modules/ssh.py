@@ -119,6 +119,27 @@ def _quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+# What ssh refuses in a host name on its command line, as OpenSSH 9.6 and 10.5 check it ("hostname
+# contains invalid characters"), besides a leading - and control characters. Quotes, commas and
+# whitespace can't be in a name at all.
+_REFUSED_ON_COMMAND_LINE = set("`$\\;&<>|(){}")
+
+
+def command_line_problem(token: str) -> str | None:
+    """Why `ssh TOKEN` wouldn't reach the Host block named TOKEN, or None."""
+    if token.startswith("-"):
+        return "ssh refuses a host name starting with - on its command line"
+    refused = [c for c in dict.fromkeys(token) if c in _REFUSED_ON_COMMAND_LINE or ord(c) < 32 or ord(c) == 127]
+    if refused:
+        return f"ssh refuses a host name holding {', '.join(map(repr, refused))} on its command line"
+    if "@" in token:
+        user, _, rest = token.rpartition("@")
+        return f"ssh reads it on its command line as user {user} at host {rest}"
+    if token.startswith("ssh://"):
+        return "ssh reads it on its command line as a URI"
+    return None
+
+
 # A hostname is written as it stands, each % doubled, since ssh reads %h in HostName as the name
 # typed and %% as %. One an earlier ari stored with those may have meant them as tokens.
 _TOKENS = (
@@ -549,7 +570,18 @@ class SshModule(Module):
         problems: list[tuple[str | None, str]] = [("options", p) for p in option_problems(options)]
         if "%h" in host.hostname or "%%" in host.hostname:
             problems.append(("hostname", _TOKENS.format(host.hostname)))
+        for token in host.tokens():
+            why = command_line_problem(token)
+            if why:
+                name = token == host.name
+                problems.append(("name" if name else "aliases", f"{'name' if name else 'alias'} {token!r} can't be typed: {why}"))
         return problems
+
+    def holds(self, inventory: Inventory, host: Host, settings: Settings, data: bytes) -> bool | None:
+        """Whether the file holds the host's block exactly as export would write it now, so ssh
+        NAME reads what the inventory says. Other hosts' blocks don't count."""
+        block = render(inventory, [host]).split("\n", 2)[2]
+        return "\n\n" + block + "\n" in data.decode("utf-8", "replace") + "\n"
 
     def validate(self, inventory: Inventory, hosts: list[Host], settings: Settings) -> list[str]:
         """Everything export writes reads back in ssh as the record holds it: the defaults'

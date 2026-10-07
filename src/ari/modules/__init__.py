@@ -113,6 +113,12 @@ class Module:
         one still loads and an edit can put it right."""
         return []
 
+    def holds(self, inventory: Inventory, host: Host, settings: Any, data: bytes) -> bool | None:
+        """Whether data, a file this module's export wrote, holds the host as export would write it
+        now, or None when the module can't tell. The TUI's s asks the ssh module before handing
+        the terminal to ssh, which reads that file."""
+        return None
+
     def describe(self, inventory: Inventory, host: Host) -> list[str]:
         """Lines for `ari show`."""
         return [f"{k} {v}" for k, v in host.modules.get(self.name, {}).items()]

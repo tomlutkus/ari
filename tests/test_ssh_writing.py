@@ -94,17 +94,17 @@ def test_a_user_starting_with_hash_no_longer_breaks_the_file(home, capsys):
 
 
 @needs_ssh
-def test_a_hostname_key_file_and_name_ssh_misreads_are_quoted(home):
+def test_a_hostname_and_key_file_ssh_misreads_are_quoted(home):
     keys = {"odd": {"path": "#keys/odd"}, "eq": {"path": "=keys/eq"}}
     write(home, [
-        {"name": "a\\\\b", "hostname": "#nope", "keys": ["odd"]},
+        {"name": "odd", "hostname": "#nope", "keys": ["odd"]},
         {"name": "eq", "hostname": "=h", "user": "=x", "keys": ["eq"]},
         {"name": "good", "hostname": "192.0.2.70"},
     ], keys=keys)
     assert run("export") == 0
     config = home / "ssh" / "10-personal.conf"
     text = config.read_text()
-    assert 'Host "a\\\\\\\\b"\n    HostName "#nope"\n    IdentityFile "#keys/odd"\n' in text
+    assert 'Host odd\n    HostName "#nope"\n    IdentityFile "#keys/odd"\n' in text
     assert 'Host eq\n    HostName "=h"\n    User "=x"\n    IdentityFile "=keys/eq"\n' in text
     eq = resolve(config, "eq")
     assert (setting(eq, "hostname"), setting(eq, "user"), setting(eq, "identityfile")) == ("=h", "=x", "=keys/eq")

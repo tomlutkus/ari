@@ -127,6 +127,24 @@ def module_reach(cfg: Config, inventory: Inventory, host: Host, module: str) -> 
     return ModuleReach.EXCLUDED if module in host.exclude else ModuleReach.WRITTEN
 
 
+def on_disk(cfg: Config, inventory: Inventory, host: Host, module: str) -> str | None:
+    """None when the module's files hold the host exactly as export would write it now; otherwise
+    why not: the module wouldn't write it as its record stands, or a file is missing or older
+    than the record. The TUI asks before s hands the terminal to ssh, which reads its own file
+    rather than the inventory."""
+    mc = cfg.get(inventory.name).modules[module]
+    for _, problem in mc.module.host_problems(inventory, host):
+        return problem
+    for out in mc.module.export(inventory, [host], mc.settings):
+        try:
+            data = out.path.read_bytes()
+        except OSError:
+            return f"{tilde(out.path)} isn't there to read; export first"
+        if mc.module.holds(inventory, host, mc.settings, data) is False:
+            return f"{tilde(out.path)} doesn't hold {host.name} as the inventory has it; export first"
+    return None
+
+
 @dataclass
 class Detail:
     """One line of show: a label, its value, and a note after the value such as (default)."""

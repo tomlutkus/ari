@@ -39,6 +39,7 @@ class Confirm(ModalScreen[bool]):
         Binding("n", "answer(False)", "No"),
         Binding("escape", "answer(False)", "No", show=False),
     ]
+    LEAVE = "y answers yes; n or Escape answers no"
 
     def __init__(self, question: str) -> None:
         super().__init__()
@@ -148,6 +149,7 @@ class HostForm(Screen[str | None]):
         Binding("ctrl+s", "save", "Save"),
         Binding("escape", "app.pop_screen", "Cancel"),
     ]
+    LEAVE = "Escape leaves the form without saving, Ctrl+S saves"
 
     def __init__(self, cfg: Config, inventories: dict[str, Inventory], inventory: str, host: Host | None = None) -> None:
         super().__init__()
@@ -308,6 +310,7 @@ class GroupPicker(Screen[str | None]):
         Binding("ctrl+s", "save", "Save"),
         Binding("escape", "app.pop_screen", "Cancel"),
     ]
+    LEAVE = "Escape leaves the picker without saving, Ctrl+S saves"
 
     def __init__(self, cfg: Config, inventory: Inventory, host: Host) -> None:
         super().__init__()
@@ -850,7 +853,8 @@ class Browser(App):
     """
     # q quits only where nothing is unsaved: the list, a host's details, an export report and the
     # keys screen bind it. In the form, the picker and the delete prompts it's just a key, and
-    # Escape is the way out.
+    # Escape is the way out. Ctrl+Q, Textual's own quit, follows the same rule: where a screen
+    # says how to leave it (LEAVE), Ctrl+Q and Ctrl+C say that instead of quitting.
 
     def __init__(self, cfg: Config, scope: str | None, modules: list[str], rows: list[Row]) -> None:
         super().__init__()
@@ -859,9 +863,25 @@ class Browser(App):
     def get_default_screen(self) -> Screen:
         return self.hosts
 
+    async def action_quit(self) -> None:
+        leave = getattr(self.screen, "LEAVE", None)
+        if leave:
+            self.notify(leave)
+        else:
+            self.exit()
+
+    def action_help_quit(self) -> None:
+        leave = getattr(self.screen, "LEAVE", None)
+        if leave:
+            self.notify(leave)
+        else:
+            super().action_help_quit()
+
     def ssh(self, row: Row) -> None:
         """Hand the terminal to ssh, and take it back when the session ends. Only for a host the ssh
-        module writes: for any other, ssh <name> would go wherever DNS sends that name."""
+        module writes, whose block in the file ssh reads is the one export would write now: for any
+        other, ssh <name> would go wherever DNS sends that name, or where the record used to say.
+        The name goes after --, so ssh never reads it as an option."""
         inventory, host = row
         name = host.name
         reach = core.module_reach(self.hosts.cfg, inventory, host, "ssh")
@@ -869,14 +889,22 @@ class Browser(App):
             why = "it excludes ssh" if reach is core.ModuleReach.EXCLUDED else f"{inventory.name} has the ssh module off"
             self.notify(f"{name} isn't in the ssh config ari writes ({why}), so ssh {name} would go wherever DNS says", severity="warning")
             return
+        why = core.on_disk(self.hosts.cfg, inventory, host, "ssh")
+        if why:
+            self.notify(f"ssh {name} wouldn't reach it as the inventory says: {why}", severity="warning")
+            return
+        code: int | None = None
         try:
             with self.suspend():
-                code = subprocess.run(["ssh", name]).returncode
+                # Nothing may leave this block by raising: suspend only resumes the app when it ends.
+                try:
+                    code = subprocess.run(["ssh", "--", name]).returncode
+                except OSError:
+                    code = None
         except SuspendNotSupported:
             self.notify("this terminal can't hand over to ssh", severity="error")
             return
-        except FileNotFoundError:
+        if code is None:
             self.notify("ssh isn't installed", severity="error")
-            return
-        if code == 255:
+        elif code == 255:
             self.notify(f"ssh {name} failed (exit 255)", severity="warning")

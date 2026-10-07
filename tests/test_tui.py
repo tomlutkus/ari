@@ -140,7 +140,8 @@ class Calls(list):
 
 @pytest.fixture
 def ssh(monkeypatch):
-    """Record ssh instead of running it; the headless driver can't suspend, so suspending does nothing."""
+    """Record ssh instead of running it; the headless driver can't suspend, so suspending does nothing.
+    s runs ssh only once the ssh files hold the host as export writes it, so tests export first."""
     calls = Calls()
 
     def run(argv, **kwargs):
@@ -153,6 +154,8 @@ def ssh(monkeypatch):
 
 
 def test_s_hands_the_terminal_to_ssh_and_comes_back_to_the_list(hosts, ssh):
+    core.export(load_config())
+
     async def script(pilot):
         await find(pilot, "fw")
         await pilot.press("s")
@@ -162,19 +165,21 @@ def test_s_hands_the_terminal_to_ssh_and_comes_back_to_the_list(hosts, ssh):
 
     app = browser()
     drive(app, script)
-    assert ssh == [["ssh", "fw"], ["ssh", "fw"]]
+    assert ssh == [["ssh", "--", "fw"], ["ssh", "--", "fw"]]
 
 
 def test_a_failed_ssh_is_reported(hosts, ssh, monkeypatch):
+    core.export(load_config())
     notes = []
     app = browser()
     monkeypatch.setattr(app, "notify", lambda message, **kw: notes.append(message))
     ssh.code = 255
     drive(app, lambda pilot: pilot.press("s"))
-    assert ssh == [["ssh", "nas"]] and notes == ["ssh nas failed (exit 255)"]
+    assert ssh == [["ssh", "--", "nas"]] and notes == ["ssh nas failed (exit 255)"]
 
 
 def test_without_a_terminal_to_suspend_ssh_never_runs(hosts, monkeypatch):
+    core.export(load_config())
     notes = []
     monkeypatch.setattr(tui.subprocess, "run", lambda *a, **k: pytest.fail("ssh ran"))
     app = browser()
@@ -187,6 +192,7 @@ def test_without_a_terminal_to_suspend_ssh_never_runs(hosts, monkeypatch):
 def test_s_refuses_a_host_the_ssh_module_doesnt_write(hosts, ssh, monkeypatch, on):
     """ssh scratch would fall through to DNS: scratch excludes ssh, and work's ssh module is parked."""
     write_config(hosts, MIXED.replace('path = "SSH/20-work.conf"', 'path = "SSH/20-work.conf"\nenabled = false'))
+    core.export(load_config())
     notes = []
     app = browser()
     monkeypatch.setattr(app, "notify", lambda message, **kw: notes.append((message, kw.get("severity"))))
@@ -205,7 +211,7 @@ def test_s_refuses_a_host_the_ssh_module_doesnt_write(hosts, ssh, monkeypatch, o
         ("scratch isn't in the ssh config ari writes (it excludes ssh), so ssh scratch would go wherever DNS says", "warning"),
         ("fw isn't in the ssh config ari writes (work has the ssh module off), so ssh fw would go wherever DNS says", "warning"),
     ]
-    assert ssh == [["ssh", "nas"]]
+    assert ssh == [["ssh", "--", "nas"]]
 
 
 def test_s_and_enter_do_nothing_when_no_host_matches(hosts, monkeypatch):
