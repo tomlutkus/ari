@@ -1,9 +1,10 @@
 # Changelog
 
-Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub.
+Versions follow [semantic versioning](https://semver.org/). Before 1.0, a minor version adds features or changes the inventory format, and a patch version only fixes bugs. Each release is a `vX.Y.Z` tag on GitHub, and a beta of one `vX.Y.ZbN`.
 
-## Unreleased
+## 1.0.0b0 (2026-10-07)
 
+- The first beta of 1.0.0: fixes for every critical and high finding of two outside test reports, with the rest to follow in further betas. From here to 1.0.0, betas bring only fixes and documentation: inventories stay schema version 3, and config.toml, every command and flag, and the module hooks stay as they are.
 - Writes never touch a file ari didn't create. Each went to `FILE.tmp` beside its target, opened through any link at that name and truncating whatever was there, so a symlink planted there, in an inventory directory or a shared checkout, had ari overwrite the file it pointed at, and a file of that name was lost. A temp is now a new hidden file, `.FILE.` followed by eight hex digits and `.ari-tmp`, which ari creates and never opens when the name is taken. `Include config.d/*.conf` never matches it, and Ansible skips hidden files.
 - Commands that write take a lock, `~/.local/state/ari/lock`, so one writes at a time. Parallel `ari add`s reported hosts as added that were lost, crashed on each other's temp, and could leave an inventory that no longer parsed. A write that finds the lock held waits up to five seconds, then stops with nothing changed. `ari key NAME --new` lets go of it while ssh-keygen asks for the passphrase; commands that only read never wait.
 - export writes the guard's state with the files it records, before renaming any. When the state directory couldn't be written, export renamed every file into place, then crashed keeping the old hashes, so the next export refused ari's own output as edited by hand.
