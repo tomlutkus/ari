@@ -29,6 +29,7 @@ from .models import (
     key_name,
     now,
     numbered,
+    unprintable,
 )
 from .modules import Module, registry
 from .paths import config_file, tilde
@@ -396,6 +397,11 @@ class GroupChanges:
 _BAD_GROUP_NAME = re.compile(r"[\s:]")
 
 
+def _unprintable(text: str) -> str:
+    shown = ", ".join(repr(c) for c in unprintable(text))
+    return f"holds {shown}, which YAML can't carry, so Ansible would skip the whole file"
+
+
 def _removal_problems(inventory: Inventory, name: str) -> list[str]:
     """A group can go only when no host is in it, directly or through a child, and no group lists it as a child."""
     where = f"{inventory.name}: group {name!r}"
@@ -457,6 +463,9 @@ def write_group(cfg: Config, inventory_name: str, name: str, c: GroupChanges) ->
             del group.reasons[key]
         else:
             problems.append(f"{where} has no reason {key!r} to remove")
+    # Descriptions and reasons go into the Ansible files as comments, which YAML reads too.
+    written = [("description", c.description or "")] + [(f"reason {key!r}", text) for key, text in c.reasons]
+    problems += [f"{where}: {what} {_unprintable(text)}" for what, text in written if unprintable(text)]
 
     after = copy.copy(inventory)
     after.groups = {**inventory.groups, name: group}
@@ -817,6 +826,7 @@ def import_hosts(
     result = module.read(source)
     inventories = load_all(cfg)
     target = inventories[cfg.get(inventory_name).name]
+    writers = _writers(cfg, target)
     label = tilde(result.files[0][0]) if result.files else (source or module_name)
     report = ImportReport(target.name, label, warnings=list(result.warnings))
     added_keys = _adopt_keys(target, result.keys, result.hosts, result.defaults.keys if result.defaults else [])
@@ -831,7 +841,7 @@ def import_hosts(
     for host in result.hosts:
         probe = copy.deepcopy(host)
         module.complete(probe)
-        problems = _shape_problems(target, probe)
+        problems = _shape_problems(target, probe, [])  # write rules wait for exclude, below
         if problems:
             report.refused += [p.message for p in problems]
         else:
@@ -938,7 +948,7 @@ def import_hosts(
             host.exclude = list(exclude)
             # Checked against everything already in the inventory, hosts added earlier in this
             # import included, so two blocks sharing an alias can't both get in.
-            problems = _host_problems(inventories, target, host, None)
+            problems = _host_problems(inventories, target, host, None, writers)
             if problems:
                 report.refused += [p.message for p in problems]
                 continue
@@ -981,7 +991,7 @@ def import_hosts(
                 f"{host.name}: its Host line leaves out {', '.join(left_out)}, so ssh applies it to the rest alone; not merged"
             )
             continue
-        problems = _host_problems(inventories, target, candidate, existing)
+        problems = _host_problems(inventories, target, candidate, existing, writers)
         if problems:
             report.refused += [p.message for p in problems]
             continue
@@ -1176,10 +1186,34 @@ def _apply(inventory: Inventory, host: Host, c: Changes) -> list[Problem]:
     return problems
 
 
-def _shape_problems(inventory: Inventory, host: Host) -> list[Problem]:
-    """The record on its own: the rules load enforces, and each installed module's data rules.
-    A host that fails these would make the inventory unreadable once saved. Name, hostname,
-    port and aliases are each checked on their own, so every bad field is reported at once."""
+def _expands(user: str | None) -> bool:
+    """OpenSSH 10 expands % tokens and ${VAR} in User, from a config or from Ansible's -o, and 9.x
+    doesn't, so no spelling of a user holding either reads the same on both."""
+    return bool(user) and ("%" in user or "${" in user)
+
+
+def _user_problem(user: str) -> str:
+    return f"user {user!r} can't be written: OpenSSH 10 expands % and ${{}} in User, and earlier versions don't"
+
+
+def user_problems(inventory: Inventory) -> list[str]:
+    """A user ssh would expand, for export: the defaults' and each host's own."""
+    records = [(f"{inventory.name} defaults", inventory.defaults.user)]
+    records += [(f"{inventory.name} ({h.name})", h.user) for h in inventory.hosts]
+    return [f"{where}: {_user_problem(user)}" for where, user in records if user and _expands(user)]
+
+
+def _writers(cfg: Config, inventory: Inventory) -> list[Module]:
+    """The modules the inventory turns on, whose write rules its hosts must meet."""
+    return [mc.module for mc in cfg.get(inventory.name).enabled()]
+
+
+def _shape_problems(inventory: Inventory, host: Host, writers: list[Module]) -> list[Problem]:
+    """The record on its own: the rules load enforces, each installed module's data rules, the
+    write rules of each module in writers that the host doesn't exclude, and a user ssh would
+    expand. A host that fails the first two would make the inventory unreadable once saved. Name,
+    hostname, port and aliases are each checked on their own, so every bad field is reported at
+    once."""
     where = f"{inventory.name} ({host.name})"
     problems = []
 
@@ -1212,23 +1246,25 @@ def _shape_problems(inventory: Inventory, host: Host) -> list[Problem]:
                 # ssh options are the one module field add and edit set directly.
                 problems.append(Problem("options" if name == "ssh" else None, str(e)))
                 unreadable.add(name)
-    for name, module in installed.items():
+    for module in writers:
         # What a module couldn't write as the record says, though load would take it.
-        if name not in unreadable:
-            field = "options" if name == "ssh" else None
-            problems += [Problem(field, f"{where}: {p}") for p in module.host_problems(inventory, host)]
+        if module.name not in unreadable and module.name not in host.exclude:
+            problems += [Problem(field, f"{where}: {p}") for field, p in module.host_problems(inventory, host)]
     if host.user and ("\n" in host.user or "\r" in host.user):
         problems.append(Problem("user", f"{where}: user must be one line"))
+    elif _expands(host.user):
+        problems.append(Problem("user", f"{where}: {_user_problem(host.user)}"))
     return problems
 
 
+
 def _host_problems(
-    inventories: dict[str, Inventory], inventory: Inventory, host: Host, original: Host | None
+    inventories: dict[str, Inventory], inventory: Inventory, host: Host, original: Host | None, writers: list[Module]
 ) -> list[Problem]:
     """Everything a host must meet before it's saved, by add, edit or import: its shape, names
     unique across all inventories, declared groups and valid reasons."""
     where = f"{inventory.name} ({host.name})"
-    problems = _shape_problems(inventory, host)
+    problems = _shape_problems(inventory, host, writers)
 
     def field_of(token: str) -> str:
         return "name" if token == host.name else "aliases"
@@ -1252,11 +1288,13 @@ def _host_problems(
     return problems + [Problem("groups", p) for p in _membership_problems(inventory, host)]
 
 
-def _write(inventories: dict[str, Inventory], inventory: Inventory, original: Host | None, host: Host, c: Changes) -> bool:
+def _write(
+    inventories: dict[str, Inventory], inventory: Inventory, original: Host | None, host: Host, c: Changes, writers: list[Module]
+) -> bool:
     """Apply, check, save. A host that fails any check is refused and nothing is saved."""
     problems = [Problem(p.field, f"{inventory.name} ({host.name}): {p.message}") for p in _apply(inventory, host, c)]
     _strip_defaults(inventory, host)
-    problems += _host_problems(inventories, inventory, host, original)
+    problems += _host_problems(inventories, inventory, host, original, writers)
     if problems:
         raise HostRefused(problems)
     if original is not None and host.to_dict() == original.to_dict():
@@ -1280,7 +1318,7 @@ def add_host(cfg: Config, inventory_name: str, name: str, hostname: str, changes
     inventories = load_all(cfg)
     inventory = inventories[cfg.get(inventory_name).name]
     host = Host(name=name, hostname=hostname)
-    _write(inventories, inventory, None, host, changes)
+    _write(inventories, inventory, None, host, changes, _writers(cfg, inventory))
     return inventory, host
 
 
@@ -1294,7 +1332,7 @@ def edit_host(
     inventories = load_all(cfg)
     inventory, original = _locate(cfg, inventories, token, scope, by_name)
     host = copy.deepcopy(original)
-    changed = _write(inventories, inventory, original, host, changes)
+    changed = _write(inventories, inventory, original, host, changes, _writers(cfg, inventory))
     return inventory, host, changed
 
 
@@ -1369,13 +1407,14 @@ def export(cfg: Config, scope: str | None = None, only: list[str] | None = None,
     targets = []
     for ic in cfg.scope(scope):
         inventory = inventories[ic.name]
-        problems += group_problems(inventory) + key_problems(inventory)
+        problems += group_problems(inventory) + key_problems(inventory) + user_problems(inventory)
         for mc in ic.enabled():
             module = mc.module
             if not module.exports or (only and module.name not in only):
                 continue
             hosts = [h for h in inventory.hosts if module.name not in h.exclude]
             problems += [f"{ic.name}/{module.name}: {p}" for p in module.validate(inventory, hosts, mc.settings)]
+            problems += [f"{ic.name} ({h.name}): {p}" for h in hosts for _, p in module.host_problems(inventory, h)]
             targets.append((ic.name, inventory, mc, hosts))
 
     # Every check, every inventory, before any module renders: export only ever sees data that passed.

@@ -254,7 +254,7 @@ def test_export_refuses_an_option_ssh_reads_differently_and_writes_nothing(home,
     assert run("export") == 1
     err = capsys.readouterr().err
     assert "personal/ssh: defaults: ssh option LocalForward '9090 localhost:90 #old' can't be written" in err
-    assert "personal/ssh: web: ssh option ProxyJump 'bastion#1' can't be written" in err
+    assert "personal (web): ssh option ProxyJump 'bastion#1' can't be written" in err
     assert not (home / "ssh" / "10-personal.conf").exists()
 
 
@@ -272,6 +272,21 @@ def test_import_refuses_a_host_whose_option_it_couldnt_write_back(home, tmp_path
     err = capsys.readouterr().err
     assert "ssh option SetEnv '=x' can't be written" in err and "not adopted" in err
     assert list(stored(home)) == ["good"]
+
+
+def test_a_host_the_ssh_module_never_writes_keeps_its_options(home, capsys):
+    """Write rules apply where the module writes the host: this one excludes ssh."""
+    write_config(home, PERSONAL_ONLY)
+    assert run("add", "web", "192.0.2.70", "--exclude", "ssh", "--opt", "ProxyJump=bastion#1") == 0
+    assert run("export") == 0
+    assert "web" not in (home / "ssh" / "10-personal.conf").read_text()
+    assert run("edit", "web", "--include", "ssh") == 1
+    assert "ssh option ProxyJump 'bastion#1' can't be written" in capsys.readouterr().err
+
+
+def test_an_inventory_with_ssh_off_keeps_its_options(home):
+    write_config(home, PERSONAL_ONLY + "enabled = false\n")
+    assert run("add", "web", "192.0.2.70", "--opt", "ProxyJump=bastion#1") == 0
 
 
 def test_a_module_that_says_nothing_has_no_host_problems():

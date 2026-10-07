@@ -586,6 +586,15 @@ and no spaces or colons, so
 \f[B]--group\f[R]
 \f[I]GROUP\f[R][:\f[I]REASON\f[R]] can
 name it.
+A description or reason can\[aq]t hold a
+character YAML refuses: a control
+character other than tab and line
+breaks, DEL, U+FFFE or U+FFFF.
+Both go into the Ansible files as
+comments, and one of those makes Ansible
+skip the whole file.
+Line breaks are fine, since each line
+becomes a comment of its own.
 .PP
 .TS
 tab(@);
@@ -1017,6 +1026,13 @@ for \f[B]HostName\f[R], \f[B]User\f[R],
 reading the whole file, so import skips
 it with a warning and doesn\[aq]t adopt
 the file.
+In \f[B]HostName\f[R], \f[V]%%\f[R] is
+read back as \f[V]%\f[R]; one with any
+other \f[V]%\f[R], ssh\[aq]s
+\f[V]%h\f[R] for the name typed or one
+ssh fails on, can\[aq]t be held by a
+record, so that host is skipped and the
+file isn\[aq]t adopted.
 A block without \f[B]HostName\f[R] is
 read the way ssh reads it, which
 connects to whichever token was typed:
@@ -1862,43 +1878,75 @@ any check fails, listing every problem
 at once: the name and aliases are valid
 ssh host names and unique across all
 inventories, the hostname has no spaces,
-the port is 1-65535, os is one line,
-every key is declared and listed once,
-every group is declared, every reason is
-one its group declares, and each
-installed module accepts the host\[aq]s
-data.
+the port is 1-65535, os is one line, the
+user is one line and holds no
+\f[V]%\f[R] or \f[V]${\f[R], every key
+is declared and listed once, every group
+is declared, every reason is one its
+group declares, and each installed
+module accepts the host\[aq]s data.
+OpenSSH 10 expands \f[V]%\f[R] tokens
+and \f[V]${VAR}\f[R] in \f[B]User\f[R],
+from a config or from Ansible\[aq]s
+\f[V]-o User\f[R], and earlier versions
+don\[aq]t, so no spelling of such a user
+reads the same on both.
 ssh options can\[aq]t repeat a keyword
 the host has a field for, like
 \f[B]User\f[R] or \f[B]Port\f[R].
-Options are kept as ssh_config text and
-written as they are, so each value must
-be one ssh reads as stored: an unclosed
-quote, which makes ssh refuse the whole
-file, is refused, and so are a
-\f[V]#\f[R] that starts a value, which
-comments out the rest, any \f[V]#\f[R]
-in \f[B]ProxyJump\f[R], where ssh cuts
-it quoted or not, a leading \f[V]=\f[R]
-or whitespace at either end, which ssh
+.PP
+Each module also refuses what it
+couldn\[aq]t write as the record says,
+wherever it writes the host: in an
+inventory that turns it on, for a host
+that doesn\[aq]t exclude it.
+The \f[B]ssh\f[R] module keeps options
+as ssh_config text and writes them as
+they are, so each value must be one ssh
+reads as stored: an unclosed quote,
+which makes ssh refuse the whole file,
+is refused, and so are a \f[V]#\f[R]
+that starts a value, which comments out
+the rest, any \f[V]#\f[R] in
+\f[B]ProxyJump\f[R], where ssh cuts it
+quoted or not, a leading \f[V]=\f[R] or
+whitespace at either end, which ssh
 drops, and an empty value.
 \f[B]ProxyCommand\f[R],
 \f[B]LocalCommand\f[R],
 \f[B]RemoteCommand\f[R] and
 \f[B]KnownHostsCommand\f[R] keep a
 \f[V]#\f[R], as ssh does.
+It writes a hostname as it stands, and
+refuses one holding \f[V]%h\f[R] or
+\f[V]%%\f[R], which ssh reads in
+\f[B]HostName\f[R] as the name typed and
+as \f[V]%\f[R]: an earlier \f[B]ari\f[R]
+may have stored one meaning that, so
+write the address out.
+The \f[B]ansible\f[R] module refuses a
+name its inventory reads as something
+else: one with a \f[V][\f[R], which
+Ansible takes as the start of a range
+and which stops it reading the file when
+it isn\[aq]t one, and a name followed by
+a colon and digits, \f[V]db:2222\f[R],
+which it takes as a host and a port.
+A name with two colons or more is IPv6,
+which Ansible takes whole.
 An inventory that already holds such a
-value still loads, so \f[B]edit\f[R]
-\f[I]NAME\f[R] \f[B]--opt\f[R]
-\f[I]KEY\f[R]= can clear it.
+value still loads, so \f[B]edit\f[R] can
+put it right; \f[B]--opt\f[R]
+\f[I]KEY\f[R]= clears an option.
 The TUI\[aq]s form and group picker save
 through these same checks.
 .PP
 \f[B]group\f[R] checks the group it
 writes the same way: a new name is
 usable, every child is declared,
-children form no cycle, and nothing a
-host relies on is removed.
+children form no cycle, its description
+and reasons hold nothing YAML refuses,
+and nothing a host relies on is removed.
 Only problems the write would add stop
 it; one already elsewhere in the
 inventory doesn\[aq]t.
@@ -1912,19 +1960,25 @@ children may not form a cycle, no alias
 may be its host\[aq]s own name in
 another case, and no two outputs may
 write the same file.
+No user, the defaults\[aq] included,
+holds \f[V]%\f[R] or \f[V]${\f[R], and
+each module\[aq]s rules above apply to
+every host it writes.
 The \f[B]ssh\f[R] module adds its own:
-every option it writes, the
-defaults\[aq] included, is one ssh reads
-as stored, and no name, alias, address,
-user or key file holds a newline or a
-NUL, which no quoting can write.
+every option the defaults give is one
+ssh reads as stored, and no name, alias,
+address, user or key file holds a
+newline or a NUL, which no quoting can
+write.
 The \f[B]ansible\f[R] module adds its
 own rules: every declared group is a
 valid Ansible group name and matches
 exactly one entry in the
-\f[B]groups\f[R] table; when
-\f[B]zones\f[R] is set, every host it
-exports is in exactly one zone; and with
+\f[B]groups\f[R] table; no group\[aq]s
+description or reason holds a character
+YAML refuses; when \f[B]zones\f[R] is
+set, every host it exports is in exactly
+one zone; and with
 \f[B]authorized_keys\f[R] on, every key
 \f[B]ari_authorized_keys\f[R] would list
 has a \f[B]pub\f[R].
@@ -1958,6 +2012,10 @@ would start a comment, or with
 what separates the keyword from its
 value, or holds two backslashes in a
 row, which ssh reads as one.
+\f[B]HostName\f[R] doubles each
+\f[V]%\f[R], since ssh reads
+\f[V]%h\f[R] in it as the name typed and
+\f[V]%%\f[R] as \f[V]%\f[R].
 Options are written as stored.
 .PP
 Every write goes to a new hidden file

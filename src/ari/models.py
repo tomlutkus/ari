@@ -21,6 +21,16 @@ MODULE_NAME = re.compile(r"[a-z][a-z0-9_]*")
 # Key names: no spaces, so a list of them can be typed on one line, and no / or ~ to read as a path.
 KEY_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+@-]*")
 
+# What YAML's reader refuses anywhere in a file, comments included, as PyYAML spells it: C0 and C1
+# controls other than tab and line breaks, DEL, surrogates, U+FFFE and U+FFFF.
+_UNPRINTABLE = re.compile("[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD\U00010000-\U0010FFFF]")
+
+
+def unprintable(text: str) -> list[str]:
+    """The characters of text, in order and once each, that YAML can't carry in a line of it. Line
+    breaks don't count: text written as comments goes one line to each."""
+    return list(dict.fromkeys(m.group() for line in text.splitlines() for m in _UNPRINTABLE.finditer(line)))
+
 
 def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")

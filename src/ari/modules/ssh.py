@@ -119,6 +119,14 @@ def _quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+# A hostname is written as it stands, each % doubled, since ssh reads %h in HostName as the name
+# typed and %% as %. One an earlier ari stored with those may have meant them as tokens.
+_TOKENS = (
+    "hostname {0!r} can't be written: ssh reads %h and %% in HostName as tokens, and a hostname is now"
+    " written as it stands; put the address itself"
+)
+
+
 def _field_problem(what: str, value: str) -> str | None:
     """A field no quoting can write: ssh_config ends a line at a newline, and at a NUL."""
     if "\n" in value or "\0" in value:
@@ -323,7 +331,13 @@ def to_hosts(
         seen.add(lowered)
         match lowered:
             case "hostname":
-                host.hostname = value
+                parts = value.split("%%")
+                if any("%" in part for part in parts):
+                    message = f"{where}: HostName {value} uses ssh's % tokens, which a record can't hold; host skipped"
+                    warnings.append(message)
+                    dropped.append(message)
+                    return []
+                host.hostname = "%".join(parts)
             case "user":
                 host.user = value
             case "port":
@@ -357,7 +371,7 @@ def render(inventory: Inventory, hosts: list[Host]) -> str:
         for note in host.notes.splitlines():
             out.append(f"# {note}".rstrip())
         out.append("Host " + " ".join(_quote(t) for t in host.tokens()))
-        out.append(f"    HostName {_quote(host.hostname)}")
+        out.append(f"    HostName {_quote(host.hostname.replace('%', '%%'))}")
         user = inventory.user(host)
         if user:
             out.append(f"    User {_quote(user)}")
@@ -528,13 +542,19 @@ class SshModule(Module):
         if host.port is None:
             host.port = 22
 
-    def host_problems(self, inventory: Inventory, host: Host) -> list[str]:
-        """The host's own options, each value as ssh would read it from the line export writes."""
-        return option_problems(host.modules.get("ssh", {}).get("options", {}))
+    def host_problems(self, inventory: Inventory, host: Host) -> list[tuple[str | None, str]]:
+        """The host's own options, each value as ssh would read it from the line export writes, and
+        a hostname an earlier ari may have stored with ssh's tokens in it."""
+        options = host.modules.get("ssh", {}).get("options", {})
+        problems: list[tuple[str | None, str]] = [("options", p) for p in option_problems(options)]
+        if "%h" in host.hostname or "%%" in host.hostname:
+            problems.append(("hostname", _TOKENS.format(host.hostname)))
+        return problems
 
     def validate(self, inventory: Inventory, hosts: list[Host], settings: Settings) -> list[str]:
         """Everything export writes reads back in ssh as the record holds it: the defaults'
-        options and user, and each host's names, address, user, key files and options."""
+        options and user, and each host's names, address, user and key files. Core runs
+        host_problems on each host besides."""
         problems = [f"defaults: {p}" for p in option_problems(inventory.defaults.modules.get("ssh", {}).get("options", {}))]
         if inventory.defaults.user and (p := _field_problem("user", inventory.defaults.user)):
             problems.append(f"defaults: {p}")
@@ -542,7 +562,6 @@ class SshModule(Module):
             fields = [("name", host.name), *(("alias", a) for a in host.aliases), ("hostname", host.hostname)]
             fields += [("user", host.user)] if host.user else []
             problems += [f"{host.name}: {p}" for what, v in fields if (p := _field_problem(what, v))]
-            problems += [f"{host.name}: {p}" for p in self.host_problems(inventory, host)]
         for name in dict.fromkeys(name for host in hosts for name in inventory.host_keys(host)):
             key = inventory.keys.get(name)
             if key is not None and (p := _field_problem("path", key.path)):

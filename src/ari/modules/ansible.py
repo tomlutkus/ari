@@ -17,7 +17,7 @@ from typing import Any
 import yaml
 
 from ..errors import HostsError
-from ..models import Defaults, GroupDef, Host, Inventory, KeyDef, check_port, check_token, declare_key
+from ..models import Defaults, GroupDef, Host, Inventory, KeyDef, check_port, check_token, declare_key, unprintable
 from ..paths import tilde
 from . import ImportResult, Module, Output
 
@@ -31,6 +31,24 @@ _VARS = {"ansible_user": "user", "ansible_ssh_private_key_file": "keys", "ansibl
 
 # The public halves of the keys ssh offers a host, for ansible.posix.authorized_key to deploy.
 AUTHORIZED = "ari_authorized_keys"
+
+# A host name Ansible's inventory reads as a host and a port: a name as its parse_address takes one,
+# dot-separated labels of word characters and dashes, then a colon and digits. Anything else with
+# a colon, IPv6 included, it takes whole.
+_LABEL = r"\w[\w-]*(?<![_-])"
+_HOST_PORT = re.compile(rf"({_LABEL}(?:\.{_LABEL})*):([0-9]+)")
+
+
+def name_problem(name: str) -> str | None:
+    """Why Ansible would read a host name as something else, or None. Its inventory expands
+    web[01:02] into two hosts and refuses a whole file holding a [ that isn't a range, and reads
+    db:2222 as db on port 2222."""
+    if "[" in name:
+        return f"name {name!r} can't be written: Ansible reads [ as the start of a range, and stops reading a file whose [ isn't one"
+    port = _HOST_PORT.fullmatch(name)
+    if port:
+        return f"name {name!r} can't be written: Ansible reads it as host {port[1]} on port {int(port[2])}"
+    return None
 
 
 @dataclass(frozen=True)
@@ -552,8 +570,22 @@ class AnsibleModule(Module):
     def defaults_data(self, data: dict[str, Any], where: str) -> dict[str, Any]:
         return self.host_data(data, where)
 
+    def host_problems(self, inventory: Inventory, host: Host) -> list[tuple[str | None, str]]:
+        problem = name_problem(host.name)
+        return [("name", problem)] if problem else []
+
     def validate(self, inventory: Inventory, hosts: list[Host], settings: Settings) -> list[str]:
         problems = []
+        for name, group in inventory.groups.items():
+            # Descriptions and reasons go out as comments, and YAML refuses a file holding one of
+            # these anywhere: Ansible would skip it whole.
+            for what, text in [("description", group.description), *((f"reason {k!r}", t) for k, t in group.reasons.items())]:
+                bad = unprintable(text)
+                if bad:
+                    problems.append(
+                        f"group {name!r} {what} holds {', '.join(map(repr, bad))}, which YAML can't carry, so Ansible would skip"
+                        f" the whole file; change it with ari group {name} -i {inventory.name}"
+                    )
         for name in inventory.groups:
             if name in RESERVED_GROUPS:
                 problems.append(f"group {name!r} is one Ansible makes itself; remove it with ari group {name} --rm -i {inventory.name}")
